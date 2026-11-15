@@ -8,7 +8,7 @@ Production-ready AWS infrastructure (ECS Fargate, RDS, ALB, CI/CD and monitoring
 |---|---|
 | `app/` | Demo API: FastAPI + PostgreSQL (SQLAlchemy 2, Alembic), managed with `uv` |
 | `infra/` | Terraform: state bootstrap, modules (network, ECR, ALB, ECS service), `dev` environment ([details](infra/README.md)) |
-| `docs/` | [Security and cost review](docs/security-review.md); diagrams coming soon |
+| `docs/` | [Provisioning guide](docs/provisioning-guide.md), [security and cost review](docs/security-review.md); diagrams coming soon |
 
 ## Run locally
 
@@ -66,7 +66,7 @@ _Coming soon._
 
 Terraform lives in [`infra/`](infra/README.md): a bootstrap for the remote state (S3 with native locking) and a cost budget, a VPC module written from scratch, and the `dev` environment. The `dev` environment runs the API on ECS Fargate in private subnets behind a public Application Load Balancer, with the image in ECR and a PostgreSQL database on RDS whose password lives only in Secrets Manager. Migrations run as a one-off ECS task.
 
-The [security and cost review](docs/security-review.md) lists every scanner finding with its decision, the IAM permissions, the security group rules, where secrets live and what the environment costs per hour.
+The [provisioning guide](docs/provisioning-guide.md) walks through building the stack in any AWS account under any project name, and through using this repository as a template for a client. The [security and cost review](docs/security-review.md) lists every scanner finding with its decision, the IAM permissions, the security group rules, where secrets live and what the environment costs per hour.
 
 ## CI/CD
 

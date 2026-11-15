@@ -44,10 +44,9 @@ module "ecs_service" {
   ecr_repository_arn    = module.ecr.repository_arn
 
   environment = {
-    DB_HOST = module.database.address
-    DB_PORT = tostring(module.database.port)
-    DB_NAME = module.database.db_name
-    # The image ships only the RDS CA bundle of us-east-2.
+    DB_HOST        = module.database.address
+    DB_PORT        = tostring(module.database.port)
+    DB_NAME        = module.database.db_name
     DB_SSLMODE     = "verify-full"
     DB_SSLROOTCERT = "/etc/ssl/certs/rds-ca.pem"
   }

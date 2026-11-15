@@ -163,7 +163,7 @@ Endpoints pay off when the NAT processes a lot of data or when a client requires
 - **No VPC endpoints.** AWS API traffic leaves through the NAT Gateway over TLS.
 - **The app connects as the RDS master user.** A dedicated user with only the privileges the app needs is not set up yet.
 - **Password rotation needs a redeploy.** RDS rotates the master password every 7 days. ECS injects it only when a task starts, so after a rotation the running tasks must be replaced.
-- **The CA bundle is for `us-east-2`.** The `region` variable of `dev` accepts only `us-east-2` until the bundle in `app/Dockerfile` is changed.
+- **The CA bundle defaults to `us-east-2`.** Another region needs the checksum of its bundle passed to the image build, see the [provisioning guide](provisioning-guide.md#using-another-region).
 - **Demo defaults on data.** No backups, no final snapshot and no deletion protection, so `make tf-destroy` leaves nothing behind.
 
 ## Next steps
