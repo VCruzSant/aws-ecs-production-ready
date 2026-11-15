@@ -20,6 +20,10 @@ build/
 *.tfvars
 !*.tfvars.example
 crash.log
+crash.*.log
+backend.hcl
+tfplan
+*.tfplan
 
 # Editors / OS
 .vscode/
