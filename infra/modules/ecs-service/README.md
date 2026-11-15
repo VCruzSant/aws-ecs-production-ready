@@ -7,10 +7,12 @@ What it creates:
 - **Cluster** with Container Insights off by default (it adds cost per metric; turn it on with `container_insights = true`).
 - **Task definition** for Fargate, `LINUX/X86_64`, 0.25 vCPU and 0.5 GB by default. The container runs with a read-only root filesystem and sends its stdout to CloudWatch Logs.
 - **Log group** `/ecs/<name>` with 7 days of retention.
-- **Execution role**, used by the ECS agent to start the task: pull from the given ECR repository and write to the log group, nothing else.
+- **Execution role**, used by the ECS agent to start the task: pull from the given ECR repository, write to the log group and, `secretsmanager:GetSecretValue` on the secrets referenced in `secrets` only. Nothing else.
 - **Task role**, the identity of the app code. It has no permissions yet; add them only when the app calls an AWS API.
-- **Security group** for the tasks. Inbound only the app port from the load balancer security group. Outbound only HTTPS, which is all the tasks need to pull the image and ship logs through the NAT Gateway.
+- **Security group** for the tasks. Inbound only the app port from the load balancer security group. Outbound HTTPS through the NAT Gateway (ECR, CloudWatch Logs, Secrets Manager), plus one rule per entry in `egress_security_groups`, each limited to one port and one security group (the database, in `envs/dev`).
 - **Service** in private subnets with no public IP, `desired_count` tasks, rolling deployments (100% minimum, 200% maximum) and the **deployment circuit breaker with rollback**: if new tasks never become healthy, ECS stops the deployment and goes back to the last working task definition.
+
+**Secrets** never go in `environment`. `secrets` maps an environment variable to a Secrets Manager reference (`<secret-arn>:<json-key>::`); ECS reads the value when the task starts, so the task definition holds only the ARN. The execution role gets read access to exactly those secrets, taken from the references.
 
 `health_check_grace_period_seconds` defaults to 30: the demo API answers `/health` a few seconds after the container starts, and the grace period keeps ECS from killing a task that is still booting.
 
@@ -32,6 +34,8 @@ What it creates:
 | `container_name` | `string` | `"app"` | Container name in the task definition |
 | `container_port` | `number` | `8000` | Port the app listens on |
 | `environment` | `map(string)` | `{}` | Plain environment variables (no secrets) |
+| `secrets` | `map(string)` | `{}` | Env vars filled from Secrets Manager: variable name to `<secret-arn>:<json-key>::` |
+| `egress_security_groups` | `map(object({ port = number, security_group_id = string }))` | `{}` | Extra outbound TCP access to other security groups |
 | `cpu` | `number` | `256` | Task CPU units |
 | `memory` | `number` | `512` | Task memory in MiB |
 | `desired_count` | `number` | `1` | Number of tasks |
@@ -49,6 +53,7 @@ What it creates:
 | `cluster_arn` | ARN of the cluster |
 | `service_name` | Name of the service |
 | `task_definition_arn` | ARN of the current task definition revision |
+| `container_name` | Name of the container (for task overrides, e.g. `make db-migrate`) |
 | `security_group_id` | Security group of the tasks |
 | `log_group_name` | CloudWatch log group |
 | `execution_role_arn` | ARN of the execution role |

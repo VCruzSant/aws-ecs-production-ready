@@ -39,6 +39,25 @@ module "ecs_service" {
   target_group_arn      = module.alb.target_group_arn
   ecr_repository_arn    = module.ecr.repository_arn
 
+  environment = {
+    DB_HOST    = module.database.address
+    DB_PORT    = tostring(module.database.port)
+    DB_NAME    = module.database.db_name
+    DB_SSLMODE = "require"
+  }
+
+  secrets = {
+    DB_USER     = "${module.database.master_user_secret_arn}:username::"
+    DB_PASSWORD = "${module.database.master_user_secret_arn}:password::"
+  }
+
+  egress_security_groups = {
+    postgres = {
+      port              = module.database.port
+      security_group_id = module.database.security_group_id
+    }
+  }
+
   image          = var.image_tag == null ? null : "${module.ecr.repository_url}:${var.image_tag}"
   container_port = var.app_port
   cpu            = var.task_cpu
@@ -46,4 +65,16 @@ module "ecs_service" {
   desired_count  = var.desired_count
 
   container_insights = var.container_insights
+}
+
+module "database" {
+  source = "../../modules/database"
+
+  name                  = local.name
+  vpc_id                = module.network.vpc_id
+  private_subnet_ids    = module.network.private_subnet_ids
+  app_security_group_id = module.ecs_service.security_group_id
+
+  instance_class = var.db_instance_class
+  multi_az       = var.db_multi_az
 }
