@@ -7,7 +7,9 @@ locals {
 
 data "aws_caller_identity" "current" {}
 
+#trivy:ignore:AWS-0034 Container Insights is a variable, off by default because it is billed per metric.
 resource "aws_ecs_cluster" "this" {
+  #checkov:skip=CKV_AWS_65:Container Insights is a variable, off by default because it is billed per metric.
   name = var.name
 
   setting {
@@ -18,7 +20,10 @@ resource "aws_ecs_cluster" "this" {
   tags = var.tags
 }
 
+#trivy:ignore:AWS-0017 CloudWatch Logs encrypts every log group by default; a KMS key adds cost and no protection here.
 resource "aws_cloudwatch_log_group" "this" {
+  #checkov:skip=CKV_AWS_158:CloudWatch Logs encrypts every log group by default; a KMS key adds cost and no protection here.
+  #checkov:skip=CKV_AWS_338:Retention is a variable; 7 days is enough for a demo.
   name              = "/ecs/${var.name}"
   retention_in_days = var.log_retention_days
 
@@ -134,7 +139,7 @@ resource "aws_vpc_security_group_ingress_rule" "from_alb" {
   referenced_security_group_id = var.alb_security_group_id
 }
 
-# HTTPS through the NAT Gateway reaches ECR, CloudWatch Logs and Secrets Manager.
+#trivy:ignore:AWS-0104 Without VPC endpoints, ECR, CloudWatch Logs and Secrets Manager are reached through the NAT.
 resource "aws_vpc_security_group_egress_rule" "https" {
   security_group_id = aws_security_group.tasks.id
   description       = "HTTPS to AWS APIs"

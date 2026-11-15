@@ -11,3 +11,5 @@
 # container_insights = false
 # db_instance_class  = "db.t4g.micro"
 # db_multi_az        = false  # true = standby in a second AZ (~2x the database cost)
+# enable_flow_logs   = true
+# alb_access_logs    = true

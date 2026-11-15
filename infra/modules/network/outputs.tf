@@ -27,3 +27,8 @@ output "nat_gateway_ids" {
   description = "IDs of the NAT Gateways (empty when enable_nat_gateway = false)."
   value       = aws_nat_gateway.this[*].id
 }
+
+output "flow_logs_log_group_name" {
+  description = "CloudWatch log group of the VPC Flow Logs (null when they are off)."
+  value       = one(aws_cloudwatch_log_group.flow_logs[*].name)
+}

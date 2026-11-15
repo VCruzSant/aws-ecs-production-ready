@@ -11,6 +11,8 @@ module "network" {
 
   enable_nat_gateway = var.enable_nat_gateway
   single_nat_gateway = var.single_nat_gateway
+
+  enable_flow_logs = var.enable_flow_logs
 }
 
 module "ecr" {
@@ -27,6 +29,8 @@ module "alb" {
   public_subnet_ids     = module.network.public_subnet_ids
   app_port              = var.app_port
   app_security_group_id = module.ecs_service.security_group_id
+
+  access_logs_enabled = var.alb_access_logs
 }
 
 module "ecs_service" {
@@ -40,10 +44,12 @@ module "ecs_service" {
   ecr_repository_arn    = module.ecr.repository_arn
 
   environment = {
-    DB_HOST    = module.database.address
-    DB_PORT    = tostring(module.database.port)
-    DB_NAME    = module.database.db_name
-    DB_SSLMODE = "require"
+    DB_HOST = module.database.address
+    DB_PORT = tostring(module.database.port)
+    DB_NAME = module.database.db_name
+    # The image ships only the RDS CA bundle of us-east-2.
+    DB_SSLMODE     = "verify-full"
+    DB_SSLROOTCERT = "/etc/ssl/certs/rds-ca.pem"
   }
 
   secrets = {

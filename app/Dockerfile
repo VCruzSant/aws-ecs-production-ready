@@ -19,8 +19,17 @@ RUN uv sync --locked --no-dev --no-editable
 
 FROM python:3.12-slim
 
-RUN groupadd --system --gid 10001 app \
+# Debian security fixes land before the base tag is rebuilt; the app runs from the venv, so pip goes.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/local/bin/pip* /usr/local/lib/python3.12/site-packages/pip* \
+    && groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+
+# Root CAs of RDS in us-east-2, for sslmode=verify-full; the build fails if AWS changes the file.
+ADD --checksum=sha256:d46e1bdfda05c8e7644e50930806a19b139a222542bf0348082fb59ece2b5fa5 --chmod=644 \
+    https://truststore.pki.rds.amazonaws.com/us-east-2/us-east-2-bundle.pem /etc/ssl/certs/rds-ca.pem
 
 WORKDIR /app
 

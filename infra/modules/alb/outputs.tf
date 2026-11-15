@@ -24,3 +24,8 @@ output "target_group_arn_suffix" {
   description = "ARN suffix of the target group, used in CloudWatch metrics."
   value       = aws_lb_target_group.app.arn_suffix
 }
+
+output "access_logs_bucket" {
+  description = "Name of the S3 bucket with the access logs (null when they are off)."
+  value       = one(aws_s3_bucket.access_logs[*].id)
+}

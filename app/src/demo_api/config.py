@@ -22,11 +22,15 @@ class DatabaseSettings(BaseSettings):
     db_name: str
     db_user: str
     db_password: SecretStr
-    # "prefer" keeps the local compose Postgres (no TLS) working; AWS sets "require".
+    # "prefer" keeps the local compose Postgres (no TLS) working; AWS sets "verify-full".
     db_sslmode: SslMode = "prefer"
+    db_sslrootcert: str | None = None
 
     @property
     def database_url(self) -> URL:
+        query = {"sslmode": self.db_sslmode}
+        if self.db_sslrootcert:
+            query["sslrootcert"] = self.db_sslrootcert
         return URL.create(
             drivername="postgresql+psycopg",
             username=self.db_user,
@@ -34,7 +38,7 @@ class DatabaseSettings(BaseSettings):
             host=self.db_host,
             port=self.db_port,
             database=self.db_name,
-            query={"sslmode": self.db_sslmode},
+            query=query,
         )
 
 

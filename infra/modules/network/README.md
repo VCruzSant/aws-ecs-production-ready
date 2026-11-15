@@ -28,6 +28,10 @@ Subnet CIDRs are derived with `cidrsubnet`: public subnets take blocks `0..n-1`,
 
 The default security group of the VPC is managed with no rules, so nothing can rely on it by accident.
 
+## VPC Flow Logs
+
+On by default. The flow log records `REJECT` traffic only (connections a security group or network ACL blocked), which is what matters for security and costs the least. Records go to the CloudWatch log group `/vpc/<name>/flow-logs`, kept for 7 days and aggregated every minute. The IAM role of the flow log can only create streams in, write to and describe the streams of that group and has no `logs:CreateLogGroup`, so a delivery that arrives after `terraform destroy` cannot recreate it. CloudWatch Logs charges $0.50 per GB ingested; rejected traffic of a small VPC is a few MB a day.
+
 ## NAT Gateway modes
 
 | `enable_nat_gateway` | `single_nat_gateway` | Result | Cost (us-east-2) |
@@ -48,6 +52,9 @@ Each NAT also uses an Elastic IP (public IPv4, ~$0.005/h).
 | `subnet_newbits` | `number` | `8` | Bits added to the VPC prefix per subnet (/16 + 8 = /24) |
 | `enable_nat_gateway` | `bool` | `true` | Create NAT Gateway(s) for the private subnets |
 | `single_nat_gateway` | `bool` | `true` | One shared NAT instead of one per AZ |
+| `enable_flow_logs` | `bool` | `true` | Send VPC Flow Logs to CloudWatch Logs |
+| `flow_logs_traffic_type` | `string` | `"REJECT"` | `REJECT`, `ACCEPT` or `ALL` |
+| `flow_logs_retention_days` | `number` | `7` | Retention of the flow logs |
 | `tags` | `map(string)` | `{}` | Extra tags merged into every resource |
 
 ## Outputs
@@ -60,6 +67,7 @@ Each NAT also uses an Elastic IP (public IPv4, ~$0.005/h).
 | `public_subnet_ids` | Public subnet IDs, one per AZ |
 | `private_subnet_ids` | Private subnet IDs, one per AZ |
 | `nat_gateway_ids` | NAT Gateway IDs (empty when NAT is disabled) |
+| `flow_logs_log_group_name` | Log group of the flow logs (null when they are off) |
 
 ## Usage
 

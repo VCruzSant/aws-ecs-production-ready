@@ -77,3 +77,13 @@ output "db_secret_arn" {
   description = "ARN of the Secrets Manager secret with the database credentials."
   value       = module.database.master_user_secret_arn
 }
+
+output "alb_access_logs_bucket" {
+  description = "S3 bucket with the load balancer access logs."
+  value       = module.alb.access_logs_bucket
+}
+
+output "flow_logs_log_group_name" {
+  description = "CloudWatch log group of the VPC Flow Logs."
+  value       = module.network.flow_logs_log_group_name
+}

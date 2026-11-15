@@ -52,6 +52,23 @@ variable "enable_deletion_protection" {
   default     = false
 }
 
+variable "access_logs_enabled" {
+  description = "Write access logs to a dedicated S3 bucket created by this module."
+  type        = bool
+  default     = true
+}
+
+variable "access_logs_retention_days" {
+  description = "Days before access log objects expire."
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.access_logs_retention_days >= 1
+    error_message = "access_logs_retention_days must be at least 1."
+  }
+}
+
 variable "tags" {
   description = "Extra tags merged into every resource (on top of the provider default tags)."
   type        = map(string)

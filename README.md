@@ -8,7 +8,7 @@ Production-ready AWS infrastructure (ECS Fargate, RDS, ALB, CI/CD and monitoring
 |---|---|
 | `app/` | Demo API: FastAPI + PostgreSQL (SQLAlchemy 2, Alembic), managed with `uv` |
 | `infra/` | Terraform: state bootstrap, modules (network, ECR, ALB, ECS service), `dev` environment ([details](infra/README.md)) |
-| `docs/` | Diagrams and notes (coming soon) |
+| `docs/` | [Security and cost review](docs/security-review.md); diagrams coming soon |
 
 ## Run locally
 
@@ -49,13 +49,14 @@ make test      # pytest against the compose Postgres, in a separate test databas
 make lint      # ruff check + format check
 make fmt       # ruff autofix + format
 make migrate   # alembic upgrade head inside the app container
+make scan      # trivy and checkov on infra/, trivy on the app image (needs Docker)
 make logs      # follow the app logs (JSON lines)
 make down      # stop everything
 ```
 
 ### Configuration
 
-The app is configured only through environment variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (no default), `DB_SSLMODE` (default `prefer`; `require` on AWS) and `LOG_LEVEL`. The database settings are read only when a route needs the database, so the API starts and `/health` answers without them (`/health/db` returns 503). Logs are written to stdout as JSON, one line per request with method, route, status and duration.
+The app is configured only through environment variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (no default), `DB_SSLMODE` (default `prefer`; `verify-full` on AWS), `DB_SSLROOTCERT` (CA bundle used to verify the server; the image ships the RDS bundle at `/etc/ssl/certs/rds-ca.pem`) and `LOG_LEVEL`. The database settings are read only when a route needs the database, so the API starts and `/health` answers without them (`/health/db` returns 503). Logs are written to stdout as JSON, one line per request with method, route, status and duration.
 
 ## Architecture
 
@@ -64,6 +65,8 @@ _Coming soon._
 ## Infrastructure
 
 Terraform lives in [`infra/`](infra/README.md): a bootstrap for the remote state (S3 with native locking) and a cost budget, a VPC module written from scratch, and the `dev` environment. The `dev` environment runs the API on ECS Fargate in private subnets behind a public Application Load Balancer, with the image in ECR and a PostgreSQL database on RDS whose password lives only in Secrets Manager. Migrations run as a one-off ECS task.
+
+The [security and cost review](docs/security-review.md) lists every scanner finding with its decision, the IAM permissions, the security group rules, where secrets live and what the environment costs per hour.
 
 ## CI/CD
 
