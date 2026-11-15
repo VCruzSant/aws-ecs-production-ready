@@ -1,0 +1,49 @@
+Run the demo API on your machine. For the AWS side see the [provisioning guide](provisioning-guide.md).
+
+# Local development
+
+Requirements: Docker with Compose v2, GNU Make, and [uv](https://docs.astral.sh/uv/) (only for tests and lint).
+
+```bash
+cp .env.example .env
+make up                         # docker compose up -d --build
+curl localhost:8000/health      # {"status":"ok"}
+curl localhost:8000/health/db   # {"status":"ok"}, or 503 if the database is down
+```
+
+The `app` container waits for Postgres to be healthy, runs `alembic upgrade head` and then starts the API on port 8000. Interactive API docs: <http://localhost:8000/docs>.
+
+Try the API:
+
+```bash
+curl -X POST localhost:8000/tasks -H 'Content-Type: application/json' -d '{"title":"Ship it"}'
+curl localhost:8000/tasks
+curl -X PATCH localhost:8000/tasks/1 -H 'Content-Type: application/json' -d '{"done":true}'
+curl -X DELETE localhost:8000/tasks/1
+```
+
+| Endpoint | Description |
+|---|---|
+| `GET /health` | Liveness, does not touch the database |
+| `GET /health/db` | Runs `SELECT 1`; 200 or 503 |
+| `POST /tasks` | Create a task (`title` required, max 200 chars) |
+| `GET /tasks` | List tasks |
+| `GET /tasks/{id}` | Get a task |
+| `PATCH /tasks/{id}` | Update `title` and/or `done` |
+| `DELETE /tasks/{id}` | Delete a task |
+
+Other commands:
+
+```bash
+make test      # pytest against the compose Postgres, in a separate test database
+make lint      # ruff check + format check
+make fmt       # ruff autofix + format
+make migrate   # alembic upgrade head inside the app container
+make scan      # trivy and checkov on infra/, trivy on the app image (needs Docker)
+make logs      # follow the app logs (JSON lines)
+make down      # stop everything
+```
+
+## Configuration
+
+The app is configured only through environment variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (no default), `DB_SSLMODE` (default `prefer`; `verify-full` on AWS), `DB_SSLROOTCERT` (CA bundle used to verify the server; the image ships the RDS bundle at `/etc/ssl/certs/rds-ca.pem`) and `LOG_LEVEL`. The database settings are read only when a route needs the database, so the API starts and `/health` answers without them (`/health/db` returns 503). Logs are written to stdout as JSON, one line per request with method, route, status and duration.

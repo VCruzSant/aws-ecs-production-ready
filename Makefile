@@ -26,7 +26,7 @@ TRIVY := docker run --rm -v trivy-cache:/root/.cache/ -v $(CURDIR):/src:ro -w /s
 TRIVY_IMAGE := docker run --rm -v trivy-cache:/root/.cache/ -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:$(TRIVY_VERSION)
 CHECKOV := docker run --rm -v $(CURDIR):/src:ro -w /src bridgecrew/checkov:$(CHECKOV_VERSION)
 
-.PHONY: help up down logs migrate test lint fmt scan tf-fmt tf-validate tf-init tf-plan tf-destroy image-push db-migrate infra-up
+.PHONY: diagram help up down logs migrate test lint fmt scan tf-fmt tf-validate tf-init tf-plan tf-destroy image-push db-migrate infra-up
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -137,3 +137,8 @@ infra-up: tf-init ## First deploy: create ECR, push the image, apply the rest, r
 	$(MAKE) image-push ENV=$(ENV) IMAGE_TAG=$(IMAGE_TAG)
 	terraform -chdir=$(TF_DIR) apply -input=false $(TF_ENV_VAR) -var image_tag=$(IMAGE_TAG)
 	$(MAKE) db-migrate ENV=$(ENV)
+
+# Graphviz and the diagrams library run in a throwaway container, so nothing is installed on the host.
+diagram: ## Regenerate docs/architecture.png from docs/architecture.py (needs Docker)
+	docker run --rm -e OWNER=$$(id -u):$$(id -g) -v $(CURDIR)/docs:/docs -w /docs python:3.12-slim \
+		sh -c 'apt-get update -qq && apt-get install -y -qq graphviz >/dev/null && pip install -q diagrams==0.24.4 && python architecture.py && chown $$OWNER architecture.png'
