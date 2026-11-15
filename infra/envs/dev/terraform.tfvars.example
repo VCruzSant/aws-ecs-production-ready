@@ -9,3 +9,5 @@
 # task_memory        = 512
 # desired_count      = 1
 # container_insights = false
+# db_instance_class  = "db.t4g.micro"
+# db_multi_az        = false  # true = standby in a second AZ (~2x the database cost)

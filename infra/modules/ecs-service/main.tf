@@ -1,5 +1,10 @@
 data "aws_region" "current" {}
 
+locals {
+  # The execution role may read exactly the secrets the task definition references.
+  secret_arns = distinct([for v in values(var.secrets) : regex("^arn:[^:]+:secretsmanager:[^:]+:[^:]+:secret:[^:]+", v)])
+}
+
 data "aws_caller_identity" "current" {}
 
 resource "aws_ecs_cluster" "this" {
@@ -62,10 +67,20 @@ data "aws_iam_policy_document" "execution" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.this.arn}:*"]
   }
+
+  dynamic "statement" {
+    for_each = length(var.secrets) > 0 ? [1] : []
+
+    content {
+      sid       = "ReadSecrets"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = local.secret_arns
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "execution" {
-  name   = "pull-image-and-write-logs"
+  name   = "start-task"
   role   = aws_iam_role.execution.id
   policy = data.aws_iam_policy_document.execution.json
 }
@@ -119,7 +134,7 @@ resource "aws_vpc_security_group_ingress_rule" "from_alb" {
   referenced_security_group_id = var.alb_security_group_id
 }
 
-# HTTPS through the NAT Gateway is enough to pull the image and ship logs.
+# HTTPS through the NAT Gateway reaches ECR, CloudWatch Logs and Secrets Manager.
 resource "aws_vpc_security_group_egress_rule" "https" {
   security_group_id = aws_security_group.tasks.id
   description       = "HTTPS to AWS APIs"
@@ -127,6 +142,17 @@ resource "aws_vpc_security_group_egress_rule" "https" {
   from_port         = 443
   to_port           = 443
   cidr_ipv4         = "0.0.0.0/0"
+}
+
+resource "aws_vpc_security_group_egress_rule" "to_security_groups" {
+  for_each = var.egress_security_groups
+
+  security_group_id            = aws_security_group.tasks.id
+  description                  = "${each.key} on port ${each.value.port}"
+  ip_protocol                  = "tcp"
+  from_port                    = each.value.port
+  to_port                      = each.value.port
+  referenced_security_group_id = each.value.security_group_id
 }
 
 resource "aws_ecs_task_definition" "this" {
@@ -155,6 +181,9 @@ resource "aws_ecs_task_definition" "this" {
     }]
 
     environment = [for k, v in var.environment : { name = k, value = v }]
+
+    # ECS reads these when the task starts, so only the ARNs are in the task definition.
+    secrets = [for k, v in var.secrets : { name = k, valueFrom = v }]
 
     logConfiguration = {
       logDriver = "awslogs"

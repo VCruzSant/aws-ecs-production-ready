@@ -1,8 +1,11 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from sqlalchemy import URL
+
+SslMode = Literal["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]
 
 
 class Settings(BaseSettings):
@@ -19,6 +22,8 @@ class DatabaseSettings(BaseSettings):
     db_name: str
     db_user: str
     db_password: SecretStr
+    # "prefer" keeps the local compose Postgres (no TLS) working; AWS sets "require".
+    db_sslmode: SslMode = "prefer"
 
     @property
     def database_url(self) -> URL:
@@ -29,6 +34,7 @@ class DatabaseSettings(BaseSettings):
             host=self.db_host,
             port=self.db_port,
             database=self.db_name,
+            query={"sslmode": self.db_sslmode},
         )
 
 

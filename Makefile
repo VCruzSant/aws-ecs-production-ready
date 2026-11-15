@@ -13,7 +13,7 @@ include .env
 export
 endif
 
-.PHONY: help up down logs migrate test lint fmt tf-fmt tf-validate tf-init tf-plan tf-destroy image-push infra-up
+.PHONY: help up down logs migrate test lint fmt tf-fmt tf-validate tf-init tf-plan tf-destroy image-push db-migrate infra-up
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -72,9 +72,40 @@ image-push: ## Build the app image for linux/amd64 and push it to ECR as IMAGE_T
 	docker push $$repo:$(IMAGE_TAG); \
 	echo "Pushed $$repo:$(IMAGE_TAG)"
 
+# A one-off task per deploy, so app tasks starting together never race on the same migration.
+db-migrate: ## Run alembic upgrade head as a one-off ECS task; fails unless it exits 0
+	@set -e; \
+	out() { terraform -chdir=$(TF_DEV_DIR) output -raw $$1; }; \
+	cluster=$$(out cluster_name); service=$$(out service_name); container=$$(out container_name); \
+	sg=$$(out task_security_group_id); logs=$$(out log_group_name); \
+	subnets=$$(terraform -chdir=$(TF_DEV_DIR) output -json private_subnet_ids | tr -d '[]" \n'); \
+	region=$$(out task_definition_arn | cut -d: -f4); \
+	taskdef=$$(aws ecs describe-services --region $$region --cluster $$cluster --services $$service --query 'services[0].taskDefinition' --output text); \
+	task=$$(aws ecs run-task --region $$region --cluster $$cluster --task-definition $$taskdef \
+		--launch-type FARGATE --started-by db-migrate \
+		--network-configuration "awsvpcConfiguration={subnets=[$$subnets],securityGroups=[$$sg],assignPublicIp=DISABLED}" \
+		--overrides "{\"containerOverrides\":[{\"name\":\"$$container\",\"command\":[\"alembic\",\"upgrade\",\"head\"]}]}" \
+		--query 'tasks[0].taskArn' --output text); \
+	if [ -z "$$task" ] || [ "$$task" = "None" ]; then echo "run-task did not start a task"; exit 1; fi; \
+	echo "Started $$task ($${taskdef##*/}), waiting for it to stop"; \
+	if ! aws ecs wait tasks-stopped --region $$region --cluster $$cluster --tasks $$task; then \
+		echo "Still running after 10 minutes; do not start another migration until it stops."; \
+		echo "Check it: aws ecs describe-tasks --region $$region --cluster $$cluster --tasks $$task"; \
+		exit 1; \
+	fi; \
+	code=$$(aws ecs describe-tasks --region $$region --cluster $$cluster --tasks $$task --query 'tasks[0].containers[0].exitCode' --output text); \
+	stream="$$container/$$container/$${task##*/}"; \
+	aws logs get-log-events --region $$region --log-group-name $$logs --log-stream-name $$stream --query 'events[].message' --output text 2>/dev/null | tr '\t' '\n' || true; \
+	if [ "$$code" != "0" ]; then \
+		echo "Migration failed (exit code $$code): $$(aws ecs describe-tasks --region $$region --cluster $$cluster --tasks $$task --query 'tasks[0].[stoppedReason,containers[0].reason]' --output text)"; \
+		echo "Logs: aws logs tail $$logs --region $$region --log-stream-names $$stream"; \
+		exit 1; \
+	fi; \
+	echo "Migration finished (exit code 0)"
+
 # The service needs an image that only exists after the repository does, so ECR goes first.
-infra-up: tf-init ## First deploy: create ECR, push the image, plan the rest into tfplan
+infra-up: tf-init ## First deploy: create ECR, push the image, apply the rest, run the migration
 	terraform -chdir=$(TF_DEV_DIR) apply -input=false -target=module.ecr
 	$(MAKE) image-push IMAGE_TAG=$(IMAGE_TAG)
-	terraform -chdir=$(TF_DEV_DIR) plan -input=false -var image_tag=$(IMAGE_TAG) -out=tfplan
-	@echo "Review the plan above, then run: terraform -chdir=$(TF_DEV_DIR) apply tfplan"
+	terraform -chdir=$(TF_DEV_DIR) apply -input=false -var image_tag=$(IMAGE_TAG)
+	$(MAKE) db-migrate

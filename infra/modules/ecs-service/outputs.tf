@@ -18,6 +18,11 @@ output "task_definition_arn" {
   value       = aws_ecs_task_definition.this.arn
 }
 
+output "container_name" {
+  description = "Name of the container in the task definition."
+  value       = var.container_name
+}
+
 output "security_group_id" {
   description = "Security group of the tasks."
   value       = aws_security_group.tasks.id

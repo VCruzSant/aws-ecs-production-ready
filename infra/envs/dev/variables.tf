@@ -81,3 +81,15 @@ variable "container_insights" {
   type        = bool
   default     = false
 }
+
+variable "db_instance_class" {
+  description = "RDS instance class."
+  type        = string
+  default     = "db.t4g.micro"
+}
+
+variable "db_multi_az" {
+  description = "Run the database with a standby in a second AZ (doubles its cost)."
+  type        = bool
+  default     = false
+}

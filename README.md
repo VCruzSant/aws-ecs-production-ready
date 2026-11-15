@@ -55,7 +55,7 @@ make down      # stop everything
 
 ### Configuration
 
-The app is configured only through environment variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (no default) and `LOG_LEVEL`. The database settings are read only when a route needs the database, so the API starts and `/health` answers without them (`/health/db` returns 503). Logs are written to stdout as JSON, one line per request with method, route, status and duration.
+The app is configured only through environment variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (no default), `DB_SSLMODE` (default `prefer`; `require` on AWS) and `LOG_LEVEL`. The database settings are read only when a route needs the database, so the API starts and `/health` answers without them (`/health/db` returns 503). Logs are written to stdout as JSON, one line per request with method, route, status and duration.
 
 ## Architecture
 
@@ -63,7 +63,7 @@ _Coming soon._
 
 ## Infrastructure
 
-Terraform lives in [`infra/`](infra/README.md): a bootstrap for the remote state (S3 with native locking) and a cost budget, a VPC module written from scratch, and the `dev` environment. The `dev` environment runs the API on ECS Fargate in private subnets behind a public Application Load Balancer, with the image in ECR. RDS is next.
+Terraform lives in [`infra/`](infra/README.md): a bootstrap for the remote state (S3 with native locking) and a cost budget, a VPC module written from scratch, and the `dev` environment. The `dev` environment runs the API on ECS Fargate in private subnets behind a public Application Load Balancer, with the image in ECR and a PostgreSQL database on RDS whose password lives only in Secrets Manager. Migrations run as a one-off ECS task.
 
 ## CI/CD
 

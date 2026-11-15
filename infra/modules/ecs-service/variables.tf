@@ -67,6 +67,26 @@ variable "environment" {
   default     = {}
 }
 
+variable "secrets" {
+  description = "Environment variables filled by ECS from Secrets Manager at start: each key is the variable name, each value a reference like \"<secret-arn>:<json-key>::\"."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for v in values(var.secrets) : can(regex("^arn:[^:]+:secretsmanager:[^:]+:[^:]+:secret:[^:]+", v))])
+    error_message = "Every value in secrets must be a Secrets Manager secret ARN, optionally followed by :<json-key>::."
+  }
+}
+
+variable "egress_security_groups" {
+  description = "Extra outbound TCP access from the tasks: each key is a label, each value a port and the security group it may reach (e.g. the database)."
+  type = map(object({
+    port              = number
+    security_group_id = string
+  }))
+  default = {}
+}
+
 variable "cpu" {
   description = "Task CPU units (256 = 0.25 vCPU)."
   type        = number
