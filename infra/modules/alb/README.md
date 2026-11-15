@@ -7,6 +7,7 @@ A public Application Load Balancer in the public subnets, in front of ECS tasks 
 - **Deregistration delay** of 30 seconds instead of the default 300, which keeps deployments and `destroy` fast for a small API with short requests.
 - **`drop_invalid_header_fields`** is on, so malformed HTTP headers never reach the app.
 - **HTTP listener** on port 80 forwarding to the target group.
+- **Access logs** (on by default) go to a dedicated S3 bucket, `<name>-alb-logs-<account-id>`: public access blocked, SSE-S3 encryption (the only option load balancer logs support), TLS-only bucket policy, objects expire after 7 days and `force_destroy` so `terraform destroy` removes it with its logs. The bucket policy lets the regional Elastic Load Balancing account write under `AWSLogs/<account-id>/` only. That account principal is how regions launched before August 2022 deliver logs, which includes `us-east-2`; newer regions use the `logdelivery.elasticloadbalancing.amazonaws.com` service principal instead.
 
 There is no HTTPS listener because the project has no domain yet. For production, add an ACM certificate, a `443` listener and a redirect from `80` to `443`.
 
@@ -24,6 +25,8 @@ The `target_group_arn` output depends on the listener, because ECS rejects a tar
 | `health_check_path` | `string` | `"/health"` | Health check path |
 | `deregistration_delay` | `number` | `30` | Seconds to drain a task before it is removed |
 | `enable_deletion_protection` | `bool` | `false` | Block deletion of the load balancer |
+| `access_logs_enabled` | `bool` | `true` | Write access logs to a dedicated S3 bucket |
+| `access_logs_retention_days` | `number` | `7` | Days before access log objects expire |
 | `tags` | `map(string)` | `{}` | Extra tags merged into every resource |
 
 ## Outputs
@@ -35,6 +38,7 @@ The `target_group_arn` output depends on the listener, because ECS rejects a tar
 | `security_group_id` | Security group of the load balancer |
 | `target_group_arn` | Target group for the ECS service |
 | `target_group_arn_suffix` | ARN suffix of the target group, for CloudWatch metrics |
+| `access_logs_bucket` | S3 bucket with the access logs (null when they are off) |
 
 ## Usage
 

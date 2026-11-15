@@ -9,9 +9,9 @@ variable "name" {
 }
 
 variable "max_image_count" {
-  description = "Number of most recent images to keep; older ones are expired by the lifecycle policy."
+  description = "Number of most recent tagged images to keep; older ones are expired by the lifecycle policy."
   type        = number
-  default     = 10
+  default     = 20
 
   validation {
     condition     = var.max_image_count >= 1

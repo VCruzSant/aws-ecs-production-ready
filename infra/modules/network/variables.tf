@@ -57,6 +57,34 @@ variable "single_nat_gateway" {
   default     = true
 }
 
+variable "enable_flow_logs" {
+  description = "Send VPC Flow Logs to a CloudWatch log group created by this module."
+  type        = bool
+  default     = true
+}
+
+variable "flow_logs_traffic_type" {
+  description = "Traffic recorded by the flow logs: REJECT (cheapest, shows blocked connections), ACCEPT or ALL."
+  type        = string
+  default     = "REJECT"
+
+  validation {
+    condition     = contains(["ACCEPT", "REJECT", "ALL"], var.flow_logs_traffic_type)
+    error_message = "flow_logs_traffic_type must be ACCEPT, REJECT or ALL."
+  }
+}
+
+variable "flow_logs_retention_days" {
+  description = "Retention of the flow logs in CloudWatch Logs."
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365], var.flow_logs_retention_days)
+    error_message = "flow_logs_retention_days must be a CloudWatch Logs retention value up to 365."
+  }
+}
+
 variable "tags" {
   description = "Extra tags merged into every resource (on top of the provider default tags)."
   type        = map(string)

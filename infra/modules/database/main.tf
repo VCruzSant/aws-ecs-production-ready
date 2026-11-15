@@ -32,9 +32,10 @@ resource "aws_db_parameter_group" "this" {
   description = "Postgres ${local.engine_major} with TLS required"
 
   parameter {
-    name         = "rds.force_ssl"
-    value        = "1"
-    apply_method = "immediate"
+    name  = "rds.force_ssl"
+    value = "1"
+    # Static on current engines; the group is attached at creation, so the first boot already enforces it.
+    apply_method = "pending-reboot"
   }
 
   tags = var.tags
@@ -44,11 +45,24 @@ resource "aws_db_parameter_group" "this" {
   }
 }
 
+#trivy:ignore:AWS-0077 Backups are a variable, off so the demo leaves no snapshot behind.
+#trivy:ignore:AWS-0177 Deletion protection is a variable, off so the demo can be destroyed.
+#trivy:ignore:AWS-0176 The app uses the password from Secrets Manager; IAM auth comes with a dedicated app user.
+#trivy:ignore:AWS-0133 Not used by a demo that lives for minutes; turn it on for real workloads.
 resource "aws_db_instance" "this" {
+  #checkov:skip=CKV_AWS_133:Backups are a variable, off so the demo leaves no snapshot behind.
+  #checkov:skip=CKV_AWS_293:Deletion protection is a variable, off so the demo can be destroyed.
+  #checkov:skip=CKV_AWS_161:The app uses the password from Secrets Manager; IAM auth comes with a dedicated app user.
+  #checkov:skip=CKV_AWS_353:Not used by a demo that lives for minutes; turn it on for real workloads.
+  #checkov:skip=CKV_AWS_129:RDS creates the log group for exported logs, and destroy would leave it behind.
+  #checkov:skip=CKV_AWS_118:Needs another IAM role and leaves an RDSOSMetrics log group behind after destroy.
   identifier     = var.name
   engine         = "postgres"
   engine_version = var.engine_version
   instance_class = var.instance_class
+
+  # An engine past standard support is upgraded instead of billed for Extended Support.
+  engine_lifecycle_support = "open-source-rds-extended-support-disabled"
 
   allocated_storage = var.allocated_storage
   storage_type      = "gp3"

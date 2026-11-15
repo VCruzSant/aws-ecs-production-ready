@@ -3,10 +3,11 @@
 A PostgreSQL instance on RDS in the private subnets, reachable only from the app tasks.
 
 - **Engine.** PostgreSQL 16 by default, the same major as the local `docker compose` stack. With a major-only `engine_version`, RDS picks the current minor and applies minor upgrades in the maintenance window.
+- **No Extended Support.** `engine_lifecycle_support = "open-source-rds-extended-support-disabled"`: when the major version reaches the end of standard support, RDS upgrades it instead of charging for RDS Extended Support.
 - **Instance.** `db.t4g.micro` (2 vCPU burstable, 1 GB, Graviton) with 20 GB of encrypted `gp3` storage.
 - **Network.** DB subnet group on the private subnets, `publicly_accessible = false`. The security group accepts only the database port from the app security group and has no other rules.
 - **Password.** `manage_master_user_password = true`: RDS generates the master password and stores it in a Secrets Manager secret it owns (JSON keys `username` and `password`). The password is never in the Terraform code, the plan or the state. Only the secret ARN is exported, for ECS to inject the values when a task starts.
-- **TLS.** A dedicated parameter group sets `rds.force_ssl = 1`, so the server refuses unencrypted connections. Clients should use at least `sslmode=require`. That encrypts the traffic but does not check the server certificate; `verify-full` with the RDS CA bundle does.
+- **TLS.** A dedicated parameter group sets `rds.force_ssl = 1`, so the server refuses unencrypted connections. Clients should use `sslmode=verify-full` with the RDS CA bundle of the region, which checks the certificate chain and the hostname. `require` encrypts the traffic but accepts any certificate.
 
 ## Demo defaults
 

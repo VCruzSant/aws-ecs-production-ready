@@ -4,7 +4,12 @@ locals {
   state_bucket_name = "${var.state_bucket_prefix}-${data.aws_caller_identity.current.account_id}"
 }
 
+#trivy:ignore:AWS-0089 Only the account owner uses the state; server access logs would need a second bucket.
 resource "aws_s3_bucket" "state" {
+  #checkov:skip=CKV_AWS_18:Only the account owner uses the state; server access logs would need a second bucket.
+  #checkov:skip=CKV_AWS_144:The state is versioned; a replica in a second region is not worth the cost here.
+  #checkov:skip=CKV_AWS_145:SSE-S3 encrypts the state at rest; a KMS key adds cost and no protection here.
+  #checkov:skip=CKV2_AWS_62:Nothing consumes events from the state bucket.
   bucket = local.state_bucket_name
 
   # Holds the state of every environment.
@@ -21,6 +26,7 @@ resource "aws_s3_bucket_versioning" "state" {
   }
 }
 
+#trivy:ignore:AWS-0132 SSE-S3 encrypts the state at rest; a KMS key adds cost and no protection here.
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 

@@ -5,9 +5,9 @@ Terraform for the AWS side of the project, in `us-east-2` (set through the `regi
 | Path | What it is |
 |---|---|
 | `bootstrap/` | One-time stack with **local** state: the S3 bucket that stores the remote state of every environment, and a monthly AWS Budget with e-mail alerts. It is not destroyed with the environments. |
-| `modules/network/` | Reusable VPC module: public and private subnets across 2 AZs, Internet Gateway, NAT Gateway(s). See its [README](modules/network/README.md). |
+| `modules/network/` | Reusable VPC module: public and private subnets across 2 AZs, Internet Gateway, NAT Gateway(s), VPC Flow Logs for rejected traffic. See its [README](modules/network/README.md). |
 | `modules/ecr/` | Private image repository with immutable tags, scan on push and a lifecycle policy. See its [README](modules/ecr/README.md). |
-| `modules/alb/` | Public Application Load Balancer, target group for ECS tasks and HTTP listener. See its [README](modules/alb/README.md). |
+| `modules/alb/` | Public Application Load Balancer, target group for ECS tasks, HTTP listener and access logs in S3. See its [README](modules/alb/README.md). |
 | `modules/ecs-service/` | ECS cluster, Fargate task definition, service with circuit breaker rollback, IAM roles, logs. See its [README](modules/ecs-service/README.md). |
 | `modules/database/` | PostgreSQL on RDS in the private subnets, password managed by RDS in Secrets Manager, TLS required. See its [README](modules/database/README.md). |
 | `envs/dev/` | The `dev` environment: network, ECR, ALB, the app on ECS Fargate and its RDS database. Remote state in S3 with native locking (`use_lockfile`, no DynamoDB table). |
@@ -78,7 +78,9 @@ Commits that only touch `infra/` or docs keep the same tag, so they reuse the im
 
 ### Database migrations
 
-`make db-migrate` starts a one-off ECS task with the current task definition of the service, in the private subnets and with the app security group, and replaces the container command with `alembic upgrade head`. It waits for the task to stop, prints its log and fails unless the exit code is 0. Running it again is safe: Alembic skips migrations that are already applied.
+`make db-migrate` starts a one-off ECS task with the current task definition of the service, in the private subnets and with the app security group, and replaces the container command with `alembic upgrade head`. It waits for the task to stop, prints its log and fails unless the exit code is 0, showing the exit code and the command to read the task log. Running it again is safe: Alembic skips migrations that are already applied.
+
+`MIGRATE_CMD` replaces the command, for example `make db-migrate MIGRATE_CMD="alembic downgrade -1"`. It takes plain words only: they are split on spaces, and quotes, backslashes or `$` are rejected. `MIGRATE_CMD=false` exercises the failure path.
 
 The migration is not part of the container command on purpose. Every task of the service runs that command, so during a deployment or a scale-out several tasks would start the same migration at the same time. A single task, run once per release, keeps schema changes in one place and makes a failed migration stop the release instead of crash-looping the service.
 
@@ -92,7 +94,7 @@ The migration runs after `terraform apply`, so for a short time the new code run
 
 RDS generates the master password and keeps it in a Secrets Manager secret (`manage_master_user_password`). It never appears in the code, the plan, the state or the task definition. The task definition references the secret keys `username` and `password` as `secrets`, and the ECS agent injects them as `DB_USER` and `DB_PASSWORD` when the task starts. The execution role can call `secretsmanager:GetSecretValue` on that one secret only.
 
-The app connects with `DB_SSLMODE=require`, and the parameter group sets `rds.force_ssl = 1`, so traffic to the database is always encrypted. The client does not verify the server certificate yet (`verify-full` with the RDS CA bundle is the next step).
+The parameter group sets `rds.force_ssl = 1`, so the database refuses unencrypted connections. The app connects with `DB_SSLMODE=verify-full` and `DB_SSLROOTCERT=/etc/ssl/certs/rds-ca.pem`: the image ships the RDS CA bundle for `us-east-2` (downloaded at build time and checked against a SHA-256), and the client verifies both the certificate chain and the hostname. For that reason the `region` variable of `dev` accepts only `us-east-2`; deploying elsewhere needs that region's bundle in `app/Dockerfile` first.
 
 ### Check the deployment
 
@@ -102,12 +104,14 @@ curl -i "$URL/health"                                                           
 curl -i "$URL/health/db"                                                           # 200 {"status":"ok"}
 curl -i -X POST "$URL/tasks" -H 'Content-Type: application/json' -d '{"title":"first"}'   # 201
 aws logs tail "$(terraform -chdir=infra/envs/dev output -raw log_group_name)" --since 10m
+aws s3 ls "s3://$(terraform -chdir=infra/envs/dev output -raw alb_access_logs_bucket)" --recursive   # access logs, every 5 minutes
+aws logs tail "$(terraform -chdir=infra/envs/dev output -raw flow_logs_log_group_name)" --since 10m  # rejected traffic
 ```
 
 When done:
 
 ```bash
-make tf-destroy                                # removes everything in dev, ECR images, logs, database and its secret included
+make tf-destroy                                # removes everything in dev, ECR images, logs, access log bucket, database and its secret included
 ```
 
 The database runs with demo settings: single-AZ, no automated backups, no final snapshot on destroy and no deletion protection. Everything in it is lost on `make tf-destroy`. The [module README](modules/database/README.md) lists what to change for real data.
@@ -119,7 +123,12 @@ The app is served over plain HTTP on the load balancer DNS name. There is no dom
 ```bash
 make tf-fmt        # terraform fmt -recursive -check infra
 make tf-validate   # init without backend + validate, for bootstrap and dev
+make scan          # trivy and checkov on infra/, trivy on the app image (needs Docker, no AWS)
 ```
+
+`make scan` fails on any finding that is neither fixed nor suppressed inline with a reason. The decisions are in the [security and cost review](../docs/security-review.md).
+
+The Terraform targets do not read `.env`; only `make test` loads it.
 
 ## Cost (us-east-2, on-demand prices)
 
@@ -132,6 +141,7 @@ The environments are meant to be created, validated and destroyed, not left runn
 | `dev` app: one Fargate task (0.25 vCPU, 0.5 GB, x86) | ~$0.012/hour | $0.04048 per vCPU-hour + $0.004445 per GB-hour |
 | `dev` database: RDS `db.t4g.micro`, single-AZ | ~$0.02/hour | Instance $0.016/h + 20 GB gp3 at $0.115/GB-month (~$0.003/h) + the Secrets Manager secret at $0.40/month (~$0.001/h). |
 | `dev` app: ECR and CloudWatch Logs | < $0.01/day | Under 100 MB per compressed image at $0.10/GB-month; a few KB of logs |
+| `dev` Flow Logs and ALB access logs | < $0.01/day | $0.50/GB ingested by CloudWatch Logs for rejected traffic (a few MB); ALB log delivery is free and S3 storage for 7 days is cents |
 | **`dev` total** | **~$0.12/hour** (~$2.90/day) | Network + ALB + one task + database |
 | `dev` with `single_nat_gateway = false` | +$0.05/hour | One more NAT + Elastic IP |
 | `dev` with `db_multi_az = true` | +$0.02/hour | Standby instance and its storage |

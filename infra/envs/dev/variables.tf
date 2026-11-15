@@ -2,6 +2,12 @@ variable "region" {
   description = "AWS region of the environment."
   type        = string
   default     = "us-east-2"
+
+  # The app connects with sslmode=verify-full, and app/Dockerfile ships only this region's RDS CA bundle.
+  validation {
+    condition     = var.region == "us-east-2"
+    error_message = "Only us-east-2 is supported: change the RDS CA bundle in app/Dockerfile before deploying elsewhere."
+  }
 }
 
 variable "project" {
@@ -36,6 +42,18 @@ variable "enable_nat_gateway" {
 
 variable "single_nat_gateway" {
   description = "One shared NAT Gateway (cheaper) instead of one per AZ."
+  type        = bool
+  default     = true
+}
+
+variable "enable_flow_logs" {
+  description = "Record rejected VPC traffic in CloudWatch Logs (7 days)."
+  type        = bool
+  default     = true
+}
+
+variable "alb_access_logs" {
+  description = "Write load balancer access logs to a dedicated S3 bucket (7 days)."
   type        = bool
   default     = true
 }

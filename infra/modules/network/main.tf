@@ -1,4 +1,9 @@
+data "aws_region" "current" {}
+
+data "aws_caller_identity" "current" {}
+
 data "aws_availability_zones" "available" {
+  #checkov:skip=CKV_AWS_394:The module takes the first az_count zones, so a new zone does not change the set.
   state = "available"
 
   # Skips Local Zones and Wavelength Zones.
@@ -138,4 +143,88 @@ resource "aws_route_table_association" "private" {
 
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[count.index].id
+}
+
+#trivy:ignore:AWS-0017 CloudWatch Logs encrypts every log group by default; a KMS key adds cost and no protection here.
+resource "aws_cloudwatch_log_group" "flow_logs" {
+  #checkov:skip=CKV_AWS_158:CloudWatch Logs encrypts every log group by default; a KMS key adds cost and no protection here.
+  #checkov:skip=CKV_AWS_338:Retention is a variable; 7 days is enough to look into blocked traffic.
+  count = var.enable_flow_logs ? 1 : 0
+
+  name              = "/vpc/${var.name}/flow-logs"
+  retention_in_days = var.flow_logs_retention_days
+
+  tags = var.tags
+}
+
+data "aws_iam_policy_document" "flow_logs_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["vpc-flow-logs.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:vpc-flow-log/*"]
+    }
+  }
+}
+
+resource "aws_iam_role" "flow_logs" {
+  count = var.enable_flow_logs ? 1 : 0
+
+  name               = "${var.name}-flow-logs"
+  assume_role_policy = data.aws_iam_policy_document.flow_logs_assume.json
+
+  tags = var.tags
+}
+
+# Without logs:CreateLogGroup, late deliveries cannot recreate the group after a destroy.
+data "aws_iam_policy_document" "flow_logs" {
+  count = var.enable_flow_logs ? 1 : 0
+
+  statement {
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams",
+    ]
+    resources = [
+      aws_cloudwatch_log_group.flow_logs[0].arn,
+      "${aws_cloudwatch_log_group.flow_logs[0].arn}:*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "flow_logs" {
+  count = var.enable_flow_logs ? 1 : 0
+
+  name   = "write-flow-logs"
+  role   = aws_iam_role.flow_logs[0].id
+  policy = data.aws_iam_policy_document.flow_logs[0].json
+}
+
+resource "aws_flow_log" "this" {
+  count = var.enable_flow_logs ? 1 : 0
+
+  vpc_id                   = aws_vpc.this.id
+  traffic_type             = var.flow_logs_traffic_type
+  log_destination_type     = "cloud-watch-logs"
+  log_destination          = aws_cloudwatch_log_group.flow_logs[0].arn
+  iam_role_arn             = aws_iam_role.flow_logs[0].arn
+  max_aggregation_interval = 60
+
+  tags = merge(var.tags, { Name = var.name })
+
+  depends_on = [aws_iam_role_policy.flow_logs]
 }
