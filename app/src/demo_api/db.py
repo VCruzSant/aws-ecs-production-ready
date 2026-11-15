@@ -4,7 +4,7 @@ from functools import lru_cache
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from demo_api.config import get_settings
+from demo_api.config import get_database_settings
 
 
 class Base(DeclarativeBase):
@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
 
 @lru_cache
 def get_engine() -> Engine:
-    settings = get_settings()
+    settings = get_database_settings()
     return create_engine(
         settings.database_url,
         pool_pre_ping=True,

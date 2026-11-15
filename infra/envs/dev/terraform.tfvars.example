@@ -4,3 +4,8 @@
 # az_count           = 2
 # enable_nat_gateway = true
 # single_nat_gateway = true  # false = one NAT Gateway per AZ (HA, ~2x the NAT cost)
+# image_tag          = "abc1234"  # usually passed by make (IMAGE_TAG), not set here
+# task_cpu           = 256
+# task_memory        = 512
+# desired_count      = 1
+# container_insights = false

@@ -2,6 +2,7 @@ import logging
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -23,6 +24,9 @@ def database() -> JSONResponse:
     try:
         with get_engine().connect() as conn:
             conn.execute(text("SELECT 1"))
+    except ValidationError:
+        logger.warning("database settings are missing")
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
     except SQLAlchemyError:
         logger.warning("database health check failed", exc_info=True)
         return JSONResponse(status_code=503, content={"status": "unavailable"})

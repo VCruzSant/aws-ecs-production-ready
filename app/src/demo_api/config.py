@@ -6,18 +6,19 @@ from sqlalchemy import URL
 
 
 class Settings(BaseSettings):
-    """Runtime configuration, read only from environment variables.
+    """Settings the API needs to start, read from environment variables."""
 
-    The database password is injected on its own (e.g. from AWS Secrets Manager),
-    so it is kept as a separate variable with no default value.
-    """
+    log_level: str = "INFO"
+
+
+class DatabaseSettings(BaseSettings):
+    """Database settings, loaded only when a route needs the database."""
 
     db_host: str
     db_port: int = 5432
     db_name: str
     db_user: str
     db_password: SecretStr
-    log_level: str = "INFO"
 
     @property
     def database_url(self) -> URL:
@@ -33,4 +34,9 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()  # type: ignore[call-arg]
+    return Settings()
+
+
+@lru_cache
+def get_database_settings() -> DatabaseSettings:
+    return DatabaseSettings()  # type: ignore[call-arg]

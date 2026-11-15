@@ -6,11 +6,14 @@ Terraform for the AWS side of the project, in `us-east-2` (set through the `regi
 |---|---|
 | `bootstrap/` | One-time stack with **local** state: the S3 bucket that stores the remote state of every environment, and a monthly AWS Budget with e-mail alerts. It is not destroyed with the environments. |
 | `modules/network/` | Reusable VPC module: public and private subnets across 2 AZs, Internet Gateway, NAT Gateway(s). See its [README](modules/network/README.md). |
-| `envs/dev/` | The `dev` environment. Remote state in S3 with native locking (`use_lockfile`, no DynamoDB table). Today it creates the network; ECS, ALB and RDS come next. |
+| `modules/ecr/` | Private image repository with immutable tags, scan on push and a lifecycle policy. See its [README](modules/ecr/README.md). |
+| `modules/alb/` | Public Application Load Balancer, target group for ECS tasks and HTTP listener. See its [README](modules/alb/README.md). |
+| `modules/ecs-service/` | ECS cluster, Fargate task definition, service with circuit breaker rollback, IAM roles, logs. See its [README](modules/ecs-service/README.md). |
+| `envs/dev/` | The `dev` environment: network, ECR, ALB and the app on ECS Fargate. Remote state in S3 with native locking (`use_lockfile`, no DynamoDB table). RDS comes next. |
 
 ## Requirements
 
-- Terraform `>= 1.10` (native S3 state locking) and the AWS CLI v2
+- Terraform `>= 1.10` (native S3 state locking), the AWS CLI v2 and Docker (to build and push the image)
 - An AWS CLI profile for the target account, exported before running anything:
 
 ```bash
@@ -43,12 +46,50 @@ The bootstrap state (`terraform.tfstate`) stays on your machine and is git-ignor
 cd infra/envs/dev
 cp backend.hcl.example backend.hcl             # set bucket and region from the bootstrap outputs
 cp terraform.tfvars.example terraform.tfvars   # optional, defaults are fine
-
 cd ../../..
-make tf-plan                                   # init with backend.hcl + plan into tfplan
-terraform -chdir=infra/envs/dev apply tfplan   # after reviewing the plan
-make tf-destroy                                # when done: removes everything in dev
 ```
+
+First deploy, from an empty environment:
+
+```bash
+make infra-up                                  # see the steps below
+terraform -chdir=infra/envs/dev apply tfplan   # after reviewing the plan
+```
+
+`make infra-up` runs three steps:
+
+1. `terraform apply -target=module.ecr` creates only the ECR repository (asks for confirmation).
+2. `make image-push` builds `app/` for `linux/amd64`, tags it with the short SHA of the last commit that changed `app/` and pushes it to ECR.
+3. `terraform plan -var image_tag=<sha> -out=tfplan` plans everything else.
+
+The ECS service needs an image that does not exist until the repository exists, so the first deploy has to create the repository on its own. This is the only place where `-target` is used. Once the repository is there, every change goes through a normal plan:
+
+```bash
+make image-push                                # skipped if that tag is already in ECR
+make tf-plan                                   # plan with IMAGE_TAG (defaults to the same SHA)
+terraform -chdir=infra/envs/dev apply tfplan
+```
+
+Commits that only touch `infra/` or docs keep the same tag, so they reuse the image already in ECR. The tag gets a `-dirty` suffix when `app/` has uncommitted or untracked changes. Tags are immutable: ECR refuses a different image under an existing tag. Pass `IMAGE_TAG=<tag>` to both targets to choose one; `latest` is rejected.
+
+`terraform apply` waits until the service is stable. If the new tasks never pass the load balancer health check, the deployment circuit breaker stops it and rolls back to the previous task definition.
+
+Check the deployment:
+
+```bash
+curl -i "$(terraform -chdir=infra/envs/dev output -raw alb_url)/health"           # 200 {"status":"ok"}
+aws logs tail "$(terraform -chdir=infra/envs/dev output -raw log_group_name)" --since 10m
+```
+
+`/health/db` returns 503 until the database exists.
+
+When done:
+
+```bash
+make tf-destroy                                # removes everything in dev, ECR images and logs included
+```
+
+The app is served over plain HTTP on the load balancer DNS name. There is no domain yet; the next step for a real deployment is a Route 53 record, an ACM certificate and an HTTPS listener that redirects port 80.
 
 ### Checks (no AWS credentials needed)
 
@@ -64,7 +105,11 @@ The environments are meant to be created, validated and destroyed, not left runn
 | What | While running | Notes |
 |---|---|---|
 | `dev` network (1 NAT Gateway + 1 Elastic IP) | **~$0.05/hour** (~$1.20/day) | NAT $0.045/h + public IPv4 $0.005/h, plus $0.045/GB processed by the NAT. VPC, subnets, route tables and Internet Gateway are free. |
-| `dev` with `single_nat_gateway = false` | ~$0.10/hour | One NAT + Elastic IP per AZ |
+| `dev` app: ALB | ~$0.04/hour | $0.0225/h + about $0.008/h of LCU at demo traffic + 2 public IPv4 addresses (one per AZ) at $0.005/h each |
+| `dev` app: one Fargate task (0.25 vCPU, 0.5 GB, x86) | ~$0.012/hour | $0.04048 per vCPU-hour + $0.004445 per GB-hour |
+| `dev` app: ECR and CloudWatch Logs | < $0.01/day | Under 100 MB per compressed image at $0.10/GB-month; a few KB of logs |
+| **`dev` total** | **~$0.10/hour** (~$2.40/day) | Network + ALB + one task |
+| `dev` with `single_nat_gateway = false` | +$0.05/hour | One more NAT + Elastic IP |
 | Bootstrap: state bucket | **< $0.01/month** | A few KB of state files plus a handful of requests |
 | Bootstrap: AWS Budget | **$0** | The first two budgets in an account are free |
 
