@@ -1,0 +1,74 @@
+# Module: ecs-service
+
+One containerized app on ECS Fargate, registered in an existing ALB target group.
+
+What it creates:
+
+- **Cluster** with Container Insights off by default (it adds cost per metric; turn it on with `container_insights = true`).
+- **Task definition** for Fargate, `LINUX/X86_64`, 0.25 vCPU and 0.5 GB by default. The container runs with a read-only root filesystem and sends its stdout to CloudWatch Logs.
+- **Log group** `/ecs/<name>` with 7 days of retention.
+- **Execution role**, used by the ECS agent to start the task: pull from the given ECR repository and write to the log group, nothing else.
+- **Task role**, the identity of the app code. It has no permissions yet; add them only when the app calls an AWS API.
+- **Security group** for the tasks. Inbound only the app port from the load balancer security group. Outbound only HTTPS, which is all the tasks need to pull the image and ship logs through the NAT Gateway.
+- **Service** in private subnets with no public IP, `desired_count` tasks, rolling deployments (100% minimum, 200% maximum) and the **deployment circuit breaker with rollback**: if new tasks never become healthy, ECS stops the deployment and goes back to the last working task definition.
+
+`health_check_grace_period_seconds` defaults to 30: the demo API answers `/health` a few seconds after the container starts, and the grace period keeps ECS from killing a task that is still booting.
+
+`terraform apply` waits for the service to reach a steady state (`wait_for_steady_state`), so a failed deployment fails the apply instead of passing silently.
+
+`image` may be null only while the module is not being created or updated (for example on `terraform destroy`); a precondition on the task definition stops any other plan without it.
+
+## Inputs
+
+| Name | Type | Default | Description |
+|---|---|---|---|
+| `name` | `string` | (required) | Name of the cluster, service and task family; prefix of the roles, security group and log group |
+| `vpc_id` | `string` | (required) | ID of the VPC |
+| `private_subnet_ids` | `list(string)` | (required) | Private subnets for the tasks |
+| `alb_security_group_id` | `string` | (required) | Security group of the load balancer, the only inbound source |
+| `target_group_arn` | `string` | (required) | Target group the tasks register in |
+| `ecr_repository_arn` | `string` | (required) | Repository the execution role can pull from |
+| `image` | `string` | `null` | Full image reference with an immutable tag (not `latest`) |
+| `container_name` | `string` | `"app"` | Container name in the task definition |
+| `container_port` | `number` | `8000` | Port the app listens on |
+| `environment` | `map(string)` | `{}` | Plain environment variables (no secrets) |
+| `cpu` | `number` | `256` | Task CPU units |
+| `memory` | `number` | `512` | Task memory in MiB |
+| `desired_count` | `number` | `1` | Number of tasks |
+| `health_check_grace_period_seconds` | `number` | `30` | Seconds to ignore failing health checks after a task starts |
+| `container_insights` | `bool` | `false` | Enable Container Insights |
+| `log_retention_days` | `number` | `7` | Log retention in days |
+| `wait_for_steady_state` | `bool` | `true` | Make apply wait for healthy tasks |
+| `tags` | `map(string)` | `{}` | Extra tags merged into every resource |
+
+## Outputs
+
+| Name | Description |
+|---|---|
+| `cluster_name` | Name of the cluster |
+| `cluster_arn` | ARN of the cluster |
+| `service_name` | Name of the service |
+| `task_definition_arn` | ARN of the current task definition revision |
+| `security_group_id` | Security group of the tasks |
+| `log_group_name` | CloudWatch log group |
+| `execution_role_arn` | ARN of the execution role |
+| `task_role_arn` | ARN of the task role |
+
+## Usage
+
+```hcl
+module "ecs_service" {
+  source = "../../modules/ecs-service"
+
+  name                  = "my-app-dev"
+  vpc_id                = module.network.vpc_id
+  private_subnet_ids    = module.network.private_subnet_ids
+  alb_security_group_id = module.alb.security_group_id
+  target_group_arn      = module.alb.target_group_arn
+  ecr_repository_arn    = module.ecr.repository_arn
+
+  image = "${module.ecr.repository_url}:abc1234"
+}
+```
+
+Requires Terraform `>= 1.10` and the AWS provider `~> 6.73`.

@@ -4,7 +4,7 @@ from alembic import context
 from sqlalchemy import Connection, create_engine, pool
 
 from demo_api import models  # noqa: F401 - registers the models on Base.metadata
-from demo_api.config import get_settings
+from demo_api.config import get_database_settings
 from demo_api.db import Base
 
 config = context.config
@@ -16,7 +16,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=get_settings().database_url.render_as_string(hide_password=False),
+        url=get_database_settings().database_url.render_as_string(hide_password=False),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -38,7 +38,7 @@ def run_migrations_online() -> None:
         _run(connection)
         return
 
-    engine = create_engine(get_settings().database_url, poolclass=pool.NullPool)
+    engine = create_engine(get_database_settings().database_url, poolclass=pool.NullPool)
     with engine.connect() as connection:
         _run(connection)
 

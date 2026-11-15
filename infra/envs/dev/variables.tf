@@ -39,3 +39,45 @@ variable "single_nat_gateway" {
   type        = bool
   default     = true
 }
+
+# Null only while the repository is created on its own, before the first image exists.
+variable "image_tag" {
+  description = "Tag of the app image in ECR to deploy (the short git SHA pushed by make image-push)."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.image_tag == null || (can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.image_tag)) && var.image_tag != "latest")
+    error_message = "image_tag must be a valid Docker tag other than \"latest\"."
+  }
+}
+
+variable "app_port" {
+  description = "Port the app listens on."
+  type        = number
+  default     = 8000
+}
+
+variable "task_cpu" {
+  description = "Task CPU units (256 = 0.25 vCPU)."
+  type        = number
+  default     = 256
+}
+
+variable "task_memory" {
+  description = "Task memory in MiB."
+  type        = number
+  default     = 512
+}
+
+variable "desired_count" {
+  description = "Number of app tasks."
+  type        = number
+  default     = 1
+}
+
+variable "container_insights" {
+  description = "Enable CloudWatch Container Insights (extra cost)."
+  type        = bool
+  default     = false
+}

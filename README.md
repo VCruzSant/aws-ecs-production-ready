@@ -7,7 +7,7 @@ Production-ready AWS infrastructure (ECS Fargate, RDS, ALB, CI/CD and monitoring
 | Path | Contents |
 |---|---|
 | `app/` | Demo API: FastAPI + PostgreSQL (SQLAlchemy 2, Alembic), managed with `uv` |
-| `infra/` | Terraform: state bootstrap, network module, `dev` environment ([details](infra/README.md)) |
+| `infra/` | Terraform: state bootstrap, modules (network, ECR, ALB, ECS service), `dev` environment ([details](infra/README.md)) |
 | `docs/` | Diagrams and notes (coming soon) |
 
 ## Run locally
@@ -55,7 +55,7 @@ make down      # stop everything
 
 ### Configuration
 
-The app is configured only through environment variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (no default) and `LOG_LEVEL`. Logs are written to stdout as JSON, one line per request with method, route, status and duration.
+The app is configured only through environment variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (no default) and `LOG_LEVEL`. The database settings are read only when a route needs the database, so the API starts and `/health` answers without them (`/health/db` returns 503). Logs are written to stdout as JSON, one line per request with method, route, status and duration.
 
 ## Architecture
 
@@ -63,7 +63,7 @@ _Coming soon._
 
 ## Infrastructure
 
-Terraform lives in [`infra/`](infra/README.md): a bootstrap for the remote state (S3 with native locking) and a cost budget, a VPC module written from scratch, and the `dev` environment. So far the `dev` environment creates the network (public and private subnets across 2 AZs, NAT Gateway); ECS, ALB and RDS are next.
+Terraform lives in [`infra/`](infra/README.md): a bootstrap for the remote state (S3 with native locking) and a cost budget, a VPC module written from scratch, and the `dev` environment. The `dev` environment runs the API on ECS Fargate in private subnets behind a public Application Load Balancer, with the image in ECR. RDS is next.
 
 ## CI/CD
 

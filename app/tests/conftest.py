@@ -20,13 +20,13 @@ APP_DIR = Path(__file__).resolve().parent.parent
 _admin_db = os.environ.get("DB_NAME", "postgres")
 os.environ["DB_NAME"] = os.environ.get("TEST_DB_NAME", f"{_admin_db}_test")
 
-from demo_api.config import get_settings  # noqa: E402
+from demo_api.config import get_database_settings  # noqa: E402
 from demo_api.db import get_engine, get_session  # noqa: E402
 from demo_api.main import app  # noqa: E402
 
 
 def _ensure_database() -> None:
-    settings = get_settings()
+    settings = get_database_settings()
     admin_url = settings.database_url.set(database=_admin_db)
     admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
     with admin_engine.connect() as conn:
