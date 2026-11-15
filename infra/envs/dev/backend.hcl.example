@@ -1,0 +1,4 @@
+# Copy to backend.hcl (git-ignored) and fill in from the bootstrap outputs:
+#   terraform -chdir=infra/bootstrap output
+bucket = "aws-ecs-prod-ready-tfstate-<account_id>"
+region = "us-east-2"

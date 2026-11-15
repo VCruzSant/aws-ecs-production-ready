@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (git-ignored) to override the defaults.
+# region             = "us-east-2"
+# vpc_cidr           = "10.0.0.0/16"
+# az_count           = 2
+# enable_nat_gateway = true
+# single_nat_gateway = true  # false = one NAT Gateway per AZ (HA, ~2x the NAT cost)

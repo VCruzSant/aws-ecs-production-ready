@@ -7,7 +7,7 @@ Production-ready AWS infrastructure (ECS Fargate, RDS, ALB, CI/CD and monitoring
 | Path | Contents |
 |---|---|
 | `app/` | Demo API: FastAPI + PostgreSQL (SQLAlchemy 2, Alembic), managed with `uv` |
-| `infra/` | Terraform (coming soon) |
+| `infra/` | Terraform: state bootstrap, network module, `dev` environment ([details](infra/README.md)) |
 | `docs/` | Diagrams and notes (coming soon) |
 
 ## Run locally
@@ -63,7 +63,7 @@ _Coming soon._
 
 ## Infrastructure
 
-_Coming soon._
+Terraform lives in [`infra/`](infra/README.md): a bootstrap for the remote state (S3 with native locking) and a cost budget, a VPC module written from scratch, and the `dev` environment. So far the `dev` environment creates the network (public and private subnets across 2 AZs, NAT Gateway); ECS, ALB and RDS are next.
 
 ## CI/CD
 
