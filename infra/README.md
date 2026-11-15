@@ -1,6 +1,6 @@
 # Infrastructure
 
-Terraform for the AWS side of the project, in `us-east-2` (set through the `region` variable; same prices as `us-east-1` for everything used here). Everything is written from scratch (no third-party modules).
+Terraform for the AWS side of the project. The region defaults to `us-east-2` and is set through the `region` variable. Everything is written from scratch (no third-party modules).
 
 | Path | What it is |
 |---|---|
@@ -10,12 +10,12 @@ Terraform for the AWS side of the project, in `us-east-2` (set through the `regi
 | `modules/alb/` | Public Application Load Balancer, target group for ECS tasks, HTTP listener and access logs in S3. See its [README](modules/alb/README.md). |
 | `modules/ecs-service/` | ECS cluster, Fargate task definition, service with circuit breaker rollback, IAM roles, logs. See its [README](modules/ecs-service/README.md). |
 | `modules/database/` | PostgreSQL on RDS in the private subnets, password managed by RDS in Secrets Manager, TLS required. See its [README](modules/database/README.md). |
-| `envs/dev/` | The `dev` environment: network, ECR, ALB, the app on ECS Fargate and its RDS database. Remote state in S3 with native locking (`use_lockfile`, no DynamoDB table). |
+| `envs/dev/` | The `dev` environment, also the template for new ones (copy the folder, see the guide): network, ECR, ALB, the app on ECS Fargate and its RDS database. Remote state in S3 with native locking (`use_lockfile`, no DynamoDB table). |
 
 ## Requirements
 
 - Terraform `>= 1.10` (native S3 state locking), the AWS CLI v2 and Docker (to build and push the image)
-- An AWS CLI profile for the target account, exported before running anything:
+- An AWS CLI profile for the target account, exported before running anything (see the [provisioning guide](../docs/provisioning-guide.md) for the prerequisites):
 
 ```bash
 export AWS_PROFILE=<your-profile>
@@ -26,53 +26,15 @@ No credentials, account IDs or e-mails are stored in versioned files.
 
 ## Usage
 
-### 1. Bootstrap (once per account)
+The step-by-step guide, from prerequisites to destroy and including how to use this for a new client, is in the [provisioning guide](../docs/provisioning-guide.md). The short version, with `ENV` as the folder name under `envs/` (default `dev`):
 
 ```bash
-cd infra/bootstrap
-cp terraform.tfvars.example terraform.tfvars   # set budget_alert_emails
-terraform init
-terraform plan -out=tfplan
-terraform apply tfplan
-terraform output -raw state_bucket_name
+make infra-up ENV=dev       # first deploy: ECR, image, everything else, migration
+make tf-plan ENV=dev        # later changes: review, then terraform -chdir=infra/envs/dev apply tfplan
+make tf-destroy ENV=dev     # remove the environment
 ```
 
-The budget e-mails the listed addresses directly (no subscription to confirm) at 50% and 100% of the actual monthly spend and at 100% of the forecast.
-
-The bootstrap state (`terraform.tfstate`) stays on your machine and is git-ignored. Keep it: it is the only record Terraform has of the bucket and the budget. The bucket has `prevent_destroy`, so removing it requires editing the code on purpose.
-
-### 2. Dev environment
-
-```bash
-cd infra/envs/dev
-cp backend.hcl.example backend.hcl             # set bucket and region from the bootstrap outputs
-cp terraform.tfvars.example terraform.tfvars   # optional, defaults are fine
-cd ../../..
-```
-
-First deploy, from an empty environment:
-
-```bash
-make infra-up
-```
-
-It runs four steps:
-
-1. `terraform apply -target=module.ecr` creates only the ECR repository (asks for confirmation).
-2. `make image-push` builds `app/` for `linux/amd64`, tags it with the short SHA of the last commit that changed `app/` and pushes it to ECR.
-3. `terraform apply -var image_tag=<sha>` shows the plan for everything else and asks for confirmation. Creating the RDS instance takes about 10 minutes.
-4. `make db-migrate` runs the database migrations (see below).
-
-The ECS service needs an image that does not exist until the repository exists, so the first deploy has to create the repository on its own. This is the only place where `-target` is used. Once the repository is there, every change goes through a normal plan:
-
-```bash
-make image-push                                # skipped if that tag is already in ECR
-make tf-plan                                   # plan with IMAGE_TAG (defaults to the same SHA)
-terraform -chdir=infra/envs/dev apply tfplan
-make db-migrate                                # when the release has new migrations; a no-op otherwise
-```
-
-Commits that only touch `infra/` or docs keep the same tag, so they reuse the image already in ECR. The tag gets a `-dirty` suffix when `app/` has uncommitted or untracked changes. Tags are immutable: ECR refuses a different image under an existing tag. Pass `IMAGE_TAG=<tag>` to both targets to choose one; `latest` is rejected.
+The ECS service needs an image that does not exist until the repository exists, so the first deploy creates the repository on its own with `-target=module.ecr`. This is the only place where `-target` is used. Commits that only touch `infra/` or docs keep the same image tag, so they reuse the image already in ECR. Tags are immutable: ECR refuses a different image under an existing tag. Pass `IMAGE_TAG=<tag>` to choose one; `latest` is rejected.
 
 `terraform apply` waits until the service is stable. If the new tasks never pass the load balancer health check, the deployment circuit breaker stops it and rolls back to the previous task definition.
 
@@ -94,7 +56,7 @@ The migration runs after `terraform apply`, so for a short time the new code run
 
 RDS generates the master password and keeps it in a Secrets Manager secret (`manage_master_user_password`). It never appears in the code, the plan, the state or the task definition. The task definition references the secret keys `username` and `password` as `secrets`, and the ECS agent injects them as `DB_USER` and `DB_PASSWORD` when the task starts. The execution role can call `secretsmanager:GetSecretValue` on that one secret only.
 
-The parameter group sets `rds.force_ssl = 1`, so the database refuses unencrypted connections. The app connects with `DB_SSLMODE=verify-full` and `DB_SSLROOTCERT=/etc/ssl/certs/rds-ca.pem`: the image ships the RDS CA bundle for `us-east-2` (downloaded at build time and checked against a SHA-256), and the client verifies both the certificate chain and the hostname. For that reason the `region` variable of `dev` accepts only `us-east-2`; deploying elsewhere needs that region's bundle in `app/Dockerfile` first.
+The parameter group sets `rds.force_ssl = 1`, so the database refuses unencrypted connections. The app connects with `DB_SSLMODE=verify-full` and `DB_SSLROOTCERT=/etc/ssl/certs/rds-ca.pem`: the image ships the RDS CA bundle of the region (downloaded at build time and checked against a SHA-256), and the client verifies both the certificate chain and the hostname. The Dockerfile defaults to `us-east-2`; for another region pass `RDS_CA_SHA256` to `make image-push` as the [provisioning guide](../docs/provisioning-guide.md#using-another-region) explains.
 
 ### Check the deployment
 

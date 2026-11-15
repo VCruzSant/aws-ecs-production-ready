@@ -27,9 +27,11 @@ RUN apt-get update \
     && groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
 
-# Root CAs of RDS in us-east-2, for sslmode=verify-full; the build fails if AWS changes the file.
-ADD --checksum=sha256:d46e1bdfda05c8e7644e50930806a19b139a222542bf0348082fb59ece2b5fa5 --chmod=644 \
-    https://truststore.pki.rds.amazonaws.com/us-east-2/us-east-2-bundle.pem /etc/ssl/certs/rds-ca.pem
+# Root CAs of RDS for sslmode=verify-full; the build fails if AWS changes the file.
+ARG RDS_CA_REGION=us-east-2
+ARG RDS_CA_SHA256=d46e1bdfda05c8e7644e50930806a19b139a222542bf0348082fb59ece2b5fa5
+ADD --checksum=sha256:${RDS_CA_SHA256} --chmod=644 \
+    https://truststore.pki.rds.amazonaws.com/${RDS_CA_REGION}/${RDS_CA_REGION}-bundle.pem /etc/ssl/certs/rds-ca.pem
 
 WORKDIR /app
 

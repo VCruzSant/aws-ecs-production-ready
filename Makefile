@@ -1,6 +1,12 @@
 .DEFAULT_GOAL := help
 APP_DIR := app
-TF_DEV_DIR := infra/envs/dev
+ENV ?= dev
+# Some shells export ENV for their own use; only a value given on the command line counts.
+ifeq ($(origin ENV),environment)
+ENV := dev
+endif
+TF_DIR := infra/envs/$(ENV)
+TF_ENV_VAR := -var environment=$(ENV)
 
 # Short SHA of the last commit that changed app/, so infra-only commits reuse the pushed image.
 ifndef IMAGE_TAG
@@ -61,7 +67,7 @@ scan: ## Static analysis: trivy and checkov on infra/, trivy on the app image (H
 	if [ $$rc -ne 0 ]; then echo "scan failed: fix each finding above or suppress it inline with a reason"; fi; \
 	exit $$rc
 
-# Terraform targets need AWS credentials, e.g. `export AWS_PROFILE=<profile>`.
+# Terraform targets need AWS credentials, e.g. `export AWS_PROFILE=<profile>`, and take ENV=<name> to pick infra/envs/<name>.
 
 tf-fmt: ## Check Terraform formatting
 	terraform fmt -recursive -check infra
@@ -69,27 +75,27 @@ tf-fmt: ## Check Terraform formatting
 tf-validate: ## Validate the bootstrap and dev stacks (no backend, no credentials)
 	@# Separate data dir so an already-initialized S3 backend is never touched.
 	cd infra/bootstrap && TF_DATA_DIR=.terraform/validate terraform init -backend=false -input=false >/dev/null && TF_DATA_DIR=.terraform/validate terraform validate
-	cd $(TF_DEV_DIR) && TF_DATA_DIR=.terraform/validate terraform init -backend=false -input=false >/dev/null && TF_DATA_DIR=.terraform/validate terraform validate
+	cd $(TF_DIR) && TF_DATA_DIR=.terraform/validate terraform init -backend=false -input=false >/dev/null && TF_DATA_DIR=.terraform/validate terraform validate
 
-tf-init:
-	terraform -chdir=$(TF_DEV_DIR) init -backend-config=backend.hcl -input=false
+tf-init: ## Init ENV (default dev) against the remote state in backend.hcl
+	terraform -chdir=$(TF_DIR) init -backend-config=backend.hcl -input=false
 
-tf-plan: tf-init ## Plan dev with IMAGE_TAG (default: current git SHA) into infra/envs/dev/tfplan
-	terraform -chdir=$(TF_DEV_DIR) plan -input=false -var image_tag=$(IMAGE_TAG) -out=tfplan
+tf-plan: tf-init ## Plan ENV (default dev) with IMAGE_TAG (default: current git SHA) into infra/envs/<ENV>/tfplan
+	terraform -chdir=$(TF_DIR) plan -input=false $(TF_ENV_VAR) -var image_tag=$(IMAGE_TAG) -out=tfplan
 
-tf-destroy: tf-init ## Destroy everything in the dev environment, ECR images included
-	terraform -chdir=$(TF_DEV_DIR) destroy
+tf-destroy: tf-init ## Destroy everything in ENV (default dev), ECR images included
+	terraform -chdir=$(TF_DIR) destroy $(TF_ENV_VAR)
 
 # Without provenance the push is a single image manifest, which ECR basic scanning supports.
-image-push: ## Build the app image for linux/amd64 and push it to ECR as IMAGE_TAG
+image-push: ## Build the app image for linux/amd64 and push it to ECR as IMAGE_TAG (outside us-east-2 also set RDS_CA_SHA256)
 	@set -e; \
-	repo=$$(terraform -chdir=$(TF_DEV_DIR) output -raw ecr_repository_url); \
+	repo=$$(terraform -chdir=$(TF_DIR) output -raw ecr_repository_url); \
 	region=$$(echo $$repo | cut -d. -f4); \
 	if aws ecr describe-images --region $$region --repository-name $${repo#*/} --image-ids imageTag=$(IMAGE_TAG) >/dev/null 2>&1; then \
 		echo "$$repo:$(IMAGE_TAG) is already in ECR, skipping the build"; exit 0; \
 	fi; \
 	aws ecr get-login-password --region $$region | docker login --username AWS --password-stdin $${repo%%/*}; \
-	docker build --platform linux/amd64 --provenance=false -t $$repo:$(IMAGE_TAG) $(APP_DIR); \
+	docker build --platform linux/amd64 --provenance=false --build-arg RDS_CA_REGION=$$region $(if $(RDS_CA_SHA256),--build-arg RDS_CA_SHA256=$(RDS_CA_SHA256)) -t $$repo:$(IMAGE_TAG) $(APP_DIR); \
 	docker push $$repo:$(IMAGE_TAG); \
 	echo "Pushed $$repo:$(IMAGE_TAG)"
 
@@ -97,10 +103,10 @@ image-push: ## Build the app image for linux/amd64 and push it to ECR as IMAGE_T
 db-migrate: ## Run MIGRATE_CMD (default: alembic upgrade head) as a one-off ECS task; fails unless it exits 0
 	$(if $(findstring ',$(MIGRATE_CMD))$(findstring ",$(MIGRATE_CMD))$(findstring \,$(MIGRATE_CMD))$(findstring $$,$(MIGRATE_CMD)),$(error MIGRATE_CMD takes plain words only, without quotes, backslashes or $$))
 	@set -e; \
-	out() { terraform -chdir=$(TF_DEV_DIR) output -raw $$1; }; \
+	out() { terraform -chdir=$(TF_DIR) output -raw $$1; }; \
 	cluster=$$(out cluster_name); service=$$(out service_name); container=$$(out container_name); \
 	sg=$$(out task_security_group_id); logs=$$(out log_group_name); \
-	subnets=$$(terraform -chdir=$(TF_DEV_DIR) output -json private_subnet_ids | tr -d '[]" \n'); \
+	subnets=$$(terraform -chdir=$(TF_DIR) output -json private_subnet_ids | tr -d '[]" \n'); \
 	region=$$(out task_definition_arn | cut -d: -f4); \
 	taskdef=$$(aws ecs describe-services --region $$region --cluster $$cluster --services $$service --query 'services[0].taskDefinition' --output text); \
 	task=$$(aws ecs run-task --region $$region --cluster $$cluster --task-definition $$taskdef \
@@ -127,7 +133,7 @@ db-migrate: ## Run MIGRATE_CMD (default: alembic upgrade head) as a one-off ECS 
 
 # The service needs an image that only exists after the repository does, so ECR goes first.
 infra-up: tf-init ## First deploy: create ECR, push the image, apply the rest, run the migration
-	terraform -chdir=$(TF_DEV_DIR) apply -input=false -target=module.ecr
-	$(MAKE) image-push IMAGE_TAG=$(IMAGE_TAG)
-	terraform -chdir=$(TF_DEV_DIR) apply -input=false -var image_tag=$(IMAGE_TAG)
-	$(MAKE) db-migrate
+	terraform -chdir=$(TF_DIR) apply -input=false $(TF_ENV_VAR) -target=module.ecr
+	$(MAKE) image-push ENV=$(ENV) IMAGE_TAG=$(IMAGE_TAG)
+	terraform -chdir=$(TF_DIR) apply -input=false $(TF_ENV_VAR) -var image_tag=$(IMAGE_TAG)
+	$(MAKE) db-migrate ENV=$(ENV)
