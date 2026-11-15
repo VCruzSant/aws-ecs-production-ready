@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
 
-# ---- build stage: resolve and install dependencies with uv ----
 FROM python:3.12-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /bin/uv
@@ -18,7 +17,6 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --locked --no-dev --no-editable
 
-# ---- runtime stage: slim image, non-root user ----
 FROM python:3.12-slim
 
 RUN groupadd --system --gid 10001 app \

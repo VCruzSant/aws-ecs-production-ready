@@ -36,8 +36,7 @@ variable "subnet_newbits" {
   default     = 8
 
   validation {
-    # Subnets can't be smaller than /28, and there must be room for the private
-    # subnets, which start at block 10.
+    # Subnets can be no smaller than /28 and need room for the private blocks.
     condition = (
       tonumber(split("/", var.vpc_cidr)[1]) + var.subnet_newbits <= 28 &&
       pow(2, var.subnet_newbits) >= 10 + var.az_count

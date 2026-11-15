@@ -9,8 +9,7 @@ terraform {
   }
 }
 
-# Credentials come from the environment (AWS_PROFILE or the usual AWS_* variables),
-# never from versioned files.
+# Credentials come from the environment, never from versioned files.
 provider "aws" {
   region = var.region
 

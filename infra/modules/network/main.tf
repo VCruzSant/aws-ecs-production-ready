@@ -1,7 +1,7 @@
 data "aws_availability_zones" "available" {
   state = "available"
 
-  # Only regular AZs (no Local Zones / Wavelength Zones).
+  # Skips Local Zones and Wavelength Zones.
   filter {
     name   = "opt-in-status"
     values = ["opt-in-not-required"]
@@ -18,17 +18,12 @@ data "aws_availability_zones" "available" {
 locals {
   azs = slice(data.aws_availability_zones.available.names, 0, var.az_count)
 
-  # Public subnets take the first blocks (10.0.0.0/24, 10.0.1.0/24, ...),
-  # private subnets start at block 10 (10.0.10.0/24, 10.0.11.0/24, ...).
+  # Private subnets start at block 10 so they never overlap the public ones.
   public_subnet_cidrs  = [for i in range(var.az_count) : cidrsubnet(var.vpc_cidr, var.subnet_newbits, i)]
   private_subnet_cidrs = [for i in range(var.az_count) : cidrsubnet(var.vpc_cidr, var.subnet_newbits, i + 10)]
 
   nat_gateway_count = var.enable_nat_gateway ? (var.single_nat_gateway ? 1 : var.az_count) : 0
 }
-
-# -----------------------------------------------------------------------------
-# VPC
-# -----------------------------------------------------------------------------
 
 resource "aws_vpc" "this" {
   cidr_block           = var.vpc_cidr
@@ -38,16 +33,12 @@ resource "aws_vpc" "this" {
   tags = merge(var.tags, { Name = var.name })
 }
 
-# Lock down the default security group so nothing can use it by accident.
+# Empty default security group so nothing uses it by accident.
 resource "aws_default_security_group" "this" {
   vpc_id = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name}-default-deny" })
 }
-
-# -----------------------------------------------------------------------------
-# Public subnets: internet-facing resources (load balancer, NAT Gateway)
-# -----------------------------------------------------------------------------
 
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
@@ -90,10 +81,6 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# -----------------------------------------------------------------------------
-# NAT Gateway(s): outbound internet for the private subnets
-# -----------------------------------------------------------------------------
-
 resource "aws_eip" "nat" {
   count = local.nat_gateway_count
 
@@ -115,10 +102,7 @@ resource "aws_nat_gateway" "this" {
   depends_on = [aws_internet_gateway.this]
 }
 
-# -----------------------------------------------------------------------------
-# Private subnets: application and database (no inbound access from the internet)
-# -----------------------------------------------------------------------------
-
+# No inbound access from the internet.
 resource "aws_subnet" "private" {
   count = var.az_count
 
@@ -132,8 +116,7 @@ resource "aws_subnet" "private" {
   })
 }
 
-# One route table per AZ, so switching between one and many NAT Gateways
-# only changes the routes, never the subnet associations.
+# One route table per AZ, so the NAT Gateway count never changes the associations.
 resource "aws_route_table" "private" {
   count = var.az_count
 

@@ -8,8 +8,7 @@ terraform {
     }
   }
 
-  # Intentionally no backend block: the bootstrap keeps its state locally,
-  # because it creates the bucket that every other stack uses as its backend.
+  # No backend block: this stack creates the state bucket, so its state stays local.
 }
 
 provider "aws" {

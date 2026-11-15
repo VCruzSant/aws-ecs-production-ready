@@ -4,14 +4,10 @@ locals {
   state_bucket_name = "${var.state_bucket_prefix}-${data.aws_caller_identity.current.account_id}"
 }
 
-# -----------------------------------------------------------------------------
-# Remote state bucket
-# -----------------------------------------------------------------------------
-
 resource "aws_s3_bucket" "state" {
   bucket = local.state_bucket_name
 
-  # The state of every environment lives here: never delete it by accident.
+  # Holds the state of every environment.
   lifecycle {
     prevent_destroy = true
   }
@@ -52,7 +48,7 @@ resource "aws_s3_bucket_ownership_controls" "state" {
   }
 }
 
-# Old state versions are kept for recovery, then expire to keep storage near zero.
+# Old state versions expire to keep storage near zero.
 resource "aws_s3_bucket_lifecycle_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 
@@ -62,8 +58,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
 
     filter {}
 
-    # The native lock writes and deletes a .tflock object on every run;
-    # drop the leftover delete markers once their old versions are gone.
+    # The native lock leaves delete markers behind; clean them up.
     expiration {
       expired_object_delete_marker = true
     }
@@ -111,10 +106,6 @@ resource "aws_s3_bucket_policy" "state" {
 
   depends_on = [aws_s3_bucket_public_access_block.state]
 }
-
-# -----------------------------------------------------------------------------
-# Monthly cost budget with e-mail alerts
-# -----------------------------------------------------------------------------
 
 resource "aws_budgets_budget" "monthly" {
   name         = "${var.project}-monthly"

@@ -35,7 +35,7 @@ lint: ## Lint and check formatting
 fmt: ## Auto-fix lint issues and format the code
 	cd $(APP_DIR) && uv run ruff check --fix . && uv run ruff format .
 
-# --- Terraform (needs AWS credentials for plan/destroy, e.g. `export AWS_PROFILE=<profile>`) ---
+# Terraform targets need AWS credentials, e.g. `export AWS_PROFILE=<profile>`.
 
 tf-fmt: ## Check Terraform formatting
 	terraform fmt -recursive -check infra

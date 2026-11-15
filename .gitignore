@@ -1,9 +1,7 @@
-# Environment
 .env
 .env.*
 !.env.example
 
-# Python
 __pycache__/
 *.py[cod]
 .venv/
@@ -13,7 +11,6 @@ __pycache__/
 dist/
 build/
 
-# Terraform
 .terraform/
 *.tfstate
 *.tfstate.*
@@ -25,7 +22,6 @@ backend.hcl
 tfplan
 *.tfplan
 
-# Editors / OS
 .vscode/
 .idea/
 .DS_Store
