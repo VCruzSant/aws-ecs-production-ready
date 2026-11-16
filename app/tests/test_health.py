@@ -3,7 +3,7 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from demo_api.config import get_database_settings
+from demo_api.config import get_database_settings, get_settings
 from demo_api.db import get_engine
 from demo_api.main import app
 
@@ -11,7 +11,17 @@ from demo_api.main import app
 def test_health_ok(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "version": "dev"}
+
+
+def test_health_shows_app_version(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_VERSION", "abc1234")
+    get_settings.cache_clear()
+    try:
+        response = client.get("/health")
+    finally:
+        get_settings.cache_clear()
+    assert response.json() == {"status": "ok", "version": "abc1234"}
 
 
 def test_health_db_ok(client: TestClient) -> None:

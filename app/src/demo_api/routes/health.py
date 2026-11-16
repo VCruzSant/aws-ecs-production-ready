@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from demo_api.config import get_settings
 from demo_api.db import get_engine
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 @router.get("")
 def liveness() -> dict[str, str]:
     """Liveness probe: never touches the database."""
-    return {"status": "ok"}
+    return {"status": "ok", "version": get_settings().app_version}
 
 
 @router.get("/db")

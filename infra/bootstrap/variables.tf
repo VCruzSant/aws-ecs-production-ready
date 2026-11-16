@@ -37,3 +37,26 @@ variable "noncurrent_version_retention_days" {
   type        = number
   default     = 90
 }
+
+variable "github_repository" {
+  description = "GitHub repository (owner/name) allowed to deploy through OIDC. Null skips the OIDC provider and the deploy role."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.github_repository == null || can(regex("^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", var.github_repository))
+    error_message = "Use the owner/name form, for example my-org/my-repo."
+  }
+}
+
+variable "deploy_environment" {
+  description = "Environment the deploy role can change: the infra/envs/<name> folder and the GitHub environment allowed to assume the role."
+  type        = string
+  default     = "dev"
+}
+
+variable "deploy_region" {
+  description = "Region of the environment the deploy role can change. Defaults to region."
+  type        = string
+  default     = null
+}

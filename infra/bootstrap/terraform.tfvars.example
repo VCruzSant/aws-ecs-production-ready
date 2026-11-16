@@ -4,3 +4,5 @@ budget_alert_emails = ["you@example.com"]
 # Optional overrides
 # region             = "us-east-2"
 # monthly_budget_usd = 10
+# github_repository  = "my-org/my-repo"   # creates the OIDC provider and the deploy role
+# deploy_environment = "dev"
