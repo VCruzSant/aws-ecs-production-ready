@@ -54,6 +54,8 @@ Edit `terraform.tfvars`:
 | `state_bucket_prefix` | Bucket name is `<prefix>-<account-id>` | `aws-ecs-prod-ready-tfstate` |
 | `region` | Region of the bucket and the budget | `us-east-2` |
 | `noncurrent_version_retention_days` | Days to keep old state versions | `90` |
+| `github_repository` | `owner/name` of the repository that deploys through GitHub Actions. Leave it out to skip continuous deployment | none |
+| `deploy_environment` | Environment the deploy role can change, and the GitHub environment allowed to use it | `dev` |
 
 ```bash
 terraform init
@@ -63,7 +65,7 @@ terraform output
 cd ../..
 ```
 
-`init` downloads the AWS provider, `plan` shows the bucket and budget (nothing is created yet) and `apply` creates them. Expected: `state_bucket_name` and `region` in the output. Note both: the next step needs them.
+`init` downloads the AWS provider, `plan` shows the bucket and budget, plus the OIDC provider and deploy role when `github_repository` is set (nothing is created yet), and `apply` creates them. Expected: `state_bucket_name` and `region` in the output, and `github_deploy_role_arn` with continuous deployment. Note them: the next steps need them.
 
 Keep `infra/bootstrap/terraform.tfstate`. It is the only record Terraform has of the bucket and the budget, and it is git-ignored.
 
@@ -143,7 +145,7 @@ curl -i "$URL/tasks"
 aws logs tail "$(terraform -chdir=infra/envs/staging output -raw log_group_name)" --since 10m
 ```
 
-Expected: `200 {"status":"ok"}` from both health checks, `201` from the POST, the task in the list and one JSON log line per request. If `/health` answers but `/health/db` returns `503`, see [Troubleshooting](#9-troubleshooting).
+Expected: `200` from both health checks, with `{"status":"ok","version":"<tag>"}` from `/health`, `201` from the POST, the task in the list and one JSON log line per request. If `/health` answers but `/health/db` returns `503`, see [Troubleshooting](#9-troubleshooting).
 
 ## 7. Later deploys
 
@@ -154,7 +156,7 @@ terraform -chdir=infra/envs/staging apply tfplan
 make db-migrate ENV=staging                          # only needed when the release has migrations
 ```
 
-The tag is the short SHA of the last commit that changed `app/`, with `-dirty` added for uncommitted changes. Tags are immutable. If the new tasks fail the load balancer health check, the deployment circuit breaker rolls back to the previous task definition. The CI/CD pipeline that automates these steps comes later.
+The tag is the short SHA of the last commit that changed `app/`, with `-dirty` added for uncommitted changes. Tags are immutable. If the new tasks fail the load balancer health check, the deployment circuit breaker rolls back to the previous task definition. The deploy workflow automates these steps, see [Continuous deployment](#11-continuous-deployment).
 
 ## 8. Destroy
 
@@ -162,7 +164,7 @@ The tag is the short SHA of the last commit that changed `app/`, with `-dirty` a
 make tf-destroy ENV=staging
 ```
 
-This removes everything in the environment: network, load balancer, service, database (without a final snapshot), ECR images and logs. The state bucket and the budget stay. They cost a few cents per month at most. To remove them as well, edit `prevent_destroy` in `infra/bootstrap/main.tf`, empty the bucket (versioned objects included) and run `terraform destroy` in `infra/bootstrap`. Do that only when no environment uses the state any more.
+This removes everything in the environment: network, load balancer, service, database (without a final snapshot), ECR images and logs. The state bucket, the budget, the OIDC provider and the deploy role stay. They cost a few cents per month at most. To remove them as well, edit `prevent_destroy` in `infra/bootstrap/main.tf`, empty the bucket (versioned objects included) and run `terraform destroy` in `infra/bootstrap`. Do that only when no environment uses the state any more.
 
 ## 9. Troubleshooting
 
@@ -183,6 +185,35 @@ This removes everything in the environment: network, load balancer, service, dat
 
 The environments are meant to be created, validated and destroyed. With everything running, `dev` costs about $0.12 per hour (about $2.90 per day). After `make tf-destroy` only the state bucket and the budget remain, under $0.01 per month. The per-resource table and the cost of each variant are in the [infra README](../infra/README.md#cost-us-east-2-on-demand-prices) and the [security review](security-review.md#cost).
 
+## 11. Continuous deployment
+
+`.github/workflows/deploy.yml` deploys the app on every push to `main` that changes `app/`, and on a manual run. It authenticates with OIDC through the deploy role from the bootstrap, so GitHub holds no AWS key. When the environment is not running it ends green with "No environment running, skipping deploy". How each step works is in the [infra README](../infra/README.md#continuous-deployment).
+
+Set it up once per repository:
+
+1. Apply the bootstrap with `github_repository` set (step 3) and note `github_deploy_role_arn`.
+2. In GitHub, open Settings, Environments, and create the environment `dev` (the value of `deploy_environment`). Optionally limit it to the `main` branch under deployment branches.
+3. Add these environment variables (Variables, not Secrets: none of them is sensitive):
+
+| Variable | Value |
+|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | `github_deploy_role_arn` from the bootstrap |
+| `AWS_REGION` | Region of the environment, for example `us-east-2` |
+| `ECS_CLUSTER` | `<project>-<env>`, the `cluster_name` output |
+| `ECS_SERVICE` | `<project>-<env>`, the `service_name` output |
+| `ECR_REPOSITORY` | `<project>-<env>`, the last part of the `ecr_repository_url` output |
+| `RDS_CA_SHA256` | Only outside `us-east-2`, see [Using another region](#using-another-region) |
+
+The names follow the `<project>-<env>` convention, so you can set them before the environment exists. Until the variables are set, the workflow ends green with a warning that deploy is not configured.
+
+The first deploy of an environment is still `make infra-up`, since the workflow only updates a running service. To redeploy, or to deploy another branch, run the workflow from the Actions tab with an optional `ref`.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | The job is not in the environment the role trusts, or `github_repository` does not match the repository | Check `deploy_environment` and `github_repository` in the bootstrap and the environment name in the workflow |
+| `Deployment of <revision> failed and the circuit breaker rolled back` | The new tasks never passed the health check | Read the app logs. The previous revision keeps serving |
+| `Migration failed` in the workflow | The migration exited with an error, so the service was not updated | Read the log printed by the step, fix the migration and push again |
+
 ## Using another region
 
 The defaults assume `us-east-2`. For another region:
@@ -194,7 +225,7 @@ The defaults assume `us-east-2`. For another region:
    curl -s https://truststore.pki.rds.amazonaws.com/<region>/<region>-bundle.pem | sha256sum
    ```
 
-3. Pass it to every image build: `make infra-up ENV=<env> RDS_CA_SHA256=<hash>` and `make image-push ENV=<env> RDS_CA_SHA256=<hash>`. The region itself is read from the ECR repository URL.
+3. Pass it to every image build: `make infra-up ENV=<env> RDS_CA_SHA256=<hash>` and `make image-push ENV=<env> RDS_CA_SHA256=<hash>`, and set it as `RDS_CA_SHA256` in the GitHub environment for the deploy workflow. The region itself is read from the ECR repository URL.
 4. The load balancer access log bucket policy uses the regional Elastic Load Balancing account, which exists only in regions launched before August 2022. For a newer region, change the principal in `infra/modules/alb/main.tf` to the `logdelivery.elasticloadbalancing.amazonaws.com` service, or set `alb_access_logs = false`.
 
 Prices differ between regions. Check them before quoting a client.
@@ -211,7 +242,7 @@ Prices differ between regions. Check them before quoting a client.
 
 - [ ] Project name (`project`), used as the prefix of every resource
 - [ ] Region, checked with the dry run from step 2 and, if it is not `us-east-2`, the extra steps above
-- [ ] Environments to create and who may deploy to each
+- [ ] Environments to create and who may deploy to each (the bootstrap creates the deploy role for one environment, `deploy_environment`; each extra environment needs its own role)
 - [ ] Budget e-mail addresses and the monthly limit
 - [ ] Task size (`task_cpu`, `task_memory`), number of tasks and database size (`db_instance_class`)
 - [ ] Production settings: `db_multi_az = true`, `single_nat_gateway = false`, `desired_count` of at least 2

@@ -4,7 +4,7 @@ Terraform for the AWS side of the project. The region defaults to `us-east-2` an
 
 | Path | What it is |
 |---|---|
-| `bootstrap/` | One-time stack with **local** state: the S3 bucket that stores the remote state of every environment, and a monthly AWS Budget with e-mail alerts. It is not destroyed with the environments. |
+| `bootstrap/` | One-time stack with **local** state: the S3 bucket that stores the remote state of every environment, a monthly AWS Budget with e-mail alerts and, when `github_repository` is set, the GitHub OIDC provider and the deploy role. It is not destroyed with the environments. See its [README](bootstrap/README.md). |
 | `modules/network/` | Reusable VPC module: public and private subnets across 2 AZs, Internet Gateway, NAT Gateway(s), VPC Flow Logs for rejected traffic. See its [README](modules/network/README.md). |
 | `modules/ecr/` | Private image repository with immutable tags, scan on push and a lifecycle policy. See its [README](modules/ecr/README.md). |
 | `modules/alb/` | Public Application Load Balancer, target group for ECS tasks, HTTP listener and access logs in S3. See its [README](modules/alb/README.md). |
@@ -50,7 +50,32 @@ The target runs the task definition the service is currently using (read from EC
 
 Until the first migration runs, `/health` is 200 but `/tasks` fails because the table does not exist yet.
 
-The migration runs after `terraform apply`, so for a short time the new code runs against the old schema. Keep migrations backward compatible (add columns before using them, drop them a release later). Running the migration before the service is updated belongs in the CD pipeline.
+With `make infra-up` the migration runs after `terraform apply`, so for a short time the new code runs against the old schema. The deploy workflow runs it before the service is updated, so the old code runs against the new schema instead. Either way, keep migrations backward compatible (add columns before using them, drop them a release later).
+
+The logic lives in `scripts/ecs-migrate.sh`, shared by `make db-migrate` and the deploy workflow. It reads the subnets, security group, container and log group from the service and the task definition, so it needs no Terraform output.
+
+### Who owns what
+
+Terraform creates and changes the infrastructure. The deploy workflow (`.github/workflows/deploy.yml`) changes the image.
+
+- `make infra-up` sets the first task definition revision. After that, the service ignores `task_definition` in Terraform (`ignore_changes`), so a `plan` after a pipeline deploy does not switch the service back to an older image.
+- Each deploy registers a new revision from the latest one of the family, with only the image replaced. A Terraform change to the task definition (CPU, memory, environment) registers a revision that reaches the service on the next deploy. To ship it without a new image, run the workflow by hand: the image tag already exists, so only the revision changes.
+- The pipeline never runs Terraform. Infrastructure changes still go through `make tf-plan` and `apply`.
+
+### Continuous deployment
+
+A push to `main` that changes `app/`, or a manual run with an optional ref, starts the deploy workflow in the GitHub environment `dev`:
+
+1. It assumes the deploy role through OIDC. There is no AWS key in GitHub.
+2. If the service does not exist or is not `ACTIVE`, it writes "No environment running, skipping deploy" to the job summary and ends green. This is the normal state, since the environment only runs while it is being validated.
+3. It builds the image and pushes it with the short SHA of the last commit that changed `app/` as the tag, unless that tag is already in ECR.
+4. It registers a new task definition revision with that image, runs `alembic upgrade head` with it as a one-off task and stops if the exit code is not 0.
+5. It updates the service and follows the deployment. If the circuit breaker rolls back, the job fails with the revision it went back to.
+6. The job summary shows the image tag, the new, previous and running revisions and the result.
+
+`/health` returns the image tag as `version`, so `curl $URL/health` shows which commit is serving.
+
+The [provisioning guide](../docs/provisioning-guide.md#11-continuous-deployment) lists the GitHub environment variables.
 
 ### Database credentials
 
@@ -62,7 +87,7 @@ The parameter group sets `rds.force_ssl = 1`, so the database refuses unencrypte
 
 ```bash
 URL=$(terraform -chdir=infra/envs/dev output -raw alb_url)
-curl -i "$URL/health"                                                              # 200 {"status":"ok"}
+curl -i "$URL/health"                                                              # 200 {"status":"ok","version":"<tag>"}
 curl -i "$URL/health/db"                                                           # 200 {"status":"ok"}
 curl -i -X POST "$URL/tasks" -H 'Content-Type: application/json' -d '{"title":"first"}'   # 201
 aws logs tail "$(terraform -chdir=infra/envs/dev output -raw log_group_name)" --since 10m
@@ -109,5 +134,6 @@ The environments are meant to be created, validated and destroyed, not left runn
 | `dev` with `db_multi_az = true` | +$0.02/hour | Standby instance and its storage |
 | Bootstrap: state bucket | **< $0.01/month** | A few KB of state files plus a handful of requests |
 | Bootstrap: AWS Budget | **$0** | The first two budgets in an account are free |
+| Bootstrap: GitHub OIDC provider and deploy role | **$0** | IAM is free |
 
-**What stays after `make tf-destroy`:** only the bootstrap (state bucket + budget), at a few cents per month at most.
+**What stays after `make tf-destroy`:** only the bootstrap (state bucket, budget, OIDC provider and deploy role), at a few cents per month at most.

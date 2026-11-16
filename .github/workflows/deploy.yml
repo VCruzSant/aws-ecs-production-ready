@@ -1,0 +1,197 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to deploy (empty deploys the selected branch)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+# Deploys queue up; cancelling one halfway would leave a migration or a rollout unfinished.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: dev
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+    steps:
+      - name: Check the configuration
+        id: config
+        env:
+          ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE_ARN" ] || [ -z "$AWS_REGION" ] || [ -z "$ECS_CLUSTER" ] || [ -z "$ECS_SERVICE" ] || [ -z "$ECR_REPOSITORY" ]; then
+            echo "::warning::The dev environment has no deploy variables, skipping deploy"
+            echo "Deploy is not configured: set the variables of the GitHub environment \`dev\`, skipping deploy" >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        if: steps.config.outputs.ready == 'true'
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Check the environment
+        id: env
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          if ! status=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+              --query 'services[0].status' --output text 2>"$RUNNER_TEMP/describe.err"); then
+            if grep -q ClusterNotFoundException "$RUNNER_TEMP/describe.err"; then
+              status=MISSING
+            else
+              cat "$RUNNER_TEMP/describe.err" >&2
+              exit 1
+            fi
+          fi
+          if [ "$status" != "ACTIVE" ]; then
+            echo "No environment running, skipping deploy" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "running=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "running=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.env.outputs.running == 'true'
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Same tag as make image-push: the last commit that changed app/.
+      - name: Build and push the image
+        id: image
+        if: steps.env.outputs.running == 'true'
+        env:
+          RDS_CA_SHA256: ${{ vars.RDS_CA_SHA256 }}
+        run: |
+          tag=$(git log -1 --format=%h -- app)
+          repo=$(aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" \
+            --query 'repositories[0].repositoryUri' --output text)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "uri=$repo:$tag" >> "$GITHUB_OUTPUT"
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$tag" >/dev/null 2>&1; then
+            echo "Image $tag is already in ECR, skipping the build"
+            exit 0
+          fi
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${repo%%/*}"
+          docker build --platform linux/amd64 --provenance=false \
+            --build-arg RDS_CA_REGION="$AWS_REGION" --build-arg APP_VERSION="$tag" \
+            ${RDS_CA_SHA256:+--build-arg RDS_CA_SHA256="$RDS_CA_SHA256"} \
+            -t "$repo:$tag" app
+          docker push "$repo:$tag"
+
+      # Starts from the latest revision of the family, so Terraform changes to it ship with the image.
+      - name: Register the task definition
+        id: taskdef
+        if: steps.env.outputs.running == 'true'
+        env:
+          IMAGE: ${{ steps.image.outputs.uri }}
+        run: |
+          read -r current container < <(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].[taskDefinition, loadBalancers[0].containerName]' --output text)
+          family=${current##*/}
+          family=${family%:*}
+          cd "$RUNNER_TEMP"
+          aws ecs describe-task-definition --task-definition "$family" --include TAGS > latest.json
+          jq --arg container "$container" --arg image "$IMAGE" '
+            (.tags // []) as $tags
+            | .taskDefinition
+            | (.containerDefinitions[] | select(.name == $container) | .image) = $image
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities,
+                  .registeredAt, .registeredBy, .deregisteredAt)
+            | if ($tags | length) > 0 then .tags = $tags else . end' latest.json > taskdef.json
+          arn=$(aws ecs register-task-definition --cli-input-json file://taskdef.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Registered ${arn##*/} with image tag ${IMAGE##*:}; the service runs ${current##*/}"
+          echo "arn=$arn" >> "$GITHUB_OUTPUT"
+          echo "previous=$current" >> "$GITHUB_OUTPUT"
+
+      # Before the rollout, so the new code never runs against the old schema.
+      - name: Run the database migration
+        if: steps.env.outputs.running == 'true'
+        env:
+          TASK_DEFINITION: ${{ steps.taskdef.outputs.arn }}
+        run: scripts/ecs-migrate.sh "$AWS_REGION" "$ECS_CLUSTER" "$ECS_SERVICE" "$TASK_DEFINITION" alembic upgrade head
+
+      - name: Update the service
+        if: steps.env.outputs.running == 'true'
+        env:
+          TASK_DEFINITION: ${{ steps.taskdef.outputs.arn }}
+        run: |
+          deployment=$(aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --task-definition "$TASK_DEFINITION" \
+            --query "service.deployments[?status=='PRIMARY'] | [0].id" --output text)
+          echo "Rolling out ${TASK_DEFINITION##*/} as $deployment"
+          deadline=$((SECONDS + 1800))
+          while :; do
+            state=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+              --query "services[0].deployments[?id=='$deployment'] | [0].rolloutState" --output text)
+            echo "$(date -u +%H:%M:%S) rollout: $state"
+            case $state in
+              COMPLETED | FAILED | None) break ;;
+            esac
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::The rollout of ${TASK_DEFINITION##*/} did not finish in 30 minutes"
+              exit 1
+            fi
+            sleep 15
+          done
+          if [ "$state" != "COMPLETED" ]; then
+            echo "The deployment failed; waiting for the circuit breaker rollback to settle"
+            aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" || true
+          fi
+          running=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          if [ "$running" != "$TASK_DEFINITION" ]; then
+            echo "::error::Deployment of ${TASK_DEFINITION##*/} failed and the circuit breaker rolled back to ${running##*/}"
+            exit 1
+          fi
+          echo "Service is stable on ${running##*/}"
+
+      - name: Summary
+        if: always() && steps.env.outputs.running == 'true'
+        env:
+          TAG: ${{ steps.image.outputs.tag }}
+          TASK_DEFINITION: ${{ steps.taskdef.outputs.arn }}
+          PREVIOUS: ${{ steps.taskdef.outputs.previous }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          running=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          if [ "$JOB_STATUS" = "success" ]; then
+            result="Deployed"
+          elif [ -n "$TASK_DEFINITION" ] && [ "$running" = "$PREVIOUS" ]; then
+            result="Failed, rolled back to the previous revision"
+          else
+            result="Failed"
+          fi
+          {
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Image tag | \`${TAG:-none}\` |"
+            echo "| New revision | \`${TASK_DEFINITION##*/}\` |"
+            echo "| Previous revision | \`${PREVIOUS##*/}\` |"
+            echo "| Running revision | \`${running##*/}\` |"
+            echo "| Result | $result |"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     """Settings the API needs to start, read from environment variables."""
 
     log_level: str = "INFO"
+    # Set at image build time, so /health tells which commit is serving.
+    app_version: str = "dev"
 
 
 class DatabaseSettings(BaseSettings):

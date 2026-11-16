@@ -79,7 +79,7 @@ Once Debian publishes the updates, `make scan` starts failing on them. They are 
 
 ## IAM
 
-Every role and policy in the Terraform code. The only `*` resource is `ecr:GetAuthorizationToken`, which does not support resource-level permissions.
+Every role and policy in the Terraform code. The only `*` resources are `ecr:GetAuthorizationToken` and `ecs:DescribeTaskDefinition`, which do not support resource-level permissions. The second one only reads task definitions.
 
 | Role or policy | Trusted by | Actions | Resources |
 |---|---|---|---|
@@ -89,6 +89,14 @@ Every role and policy in the Terraform code. The only `*` resource is `ecr:GetAu
 | | | `secretsmanager:GetSecretValue` | The database secret only |
 | Task role (the app identity) | `ecs-tasks.amazonaws.com`, only from ECS in this account and region (`aws:SourceAccount`, `aws:SourceArn`) | None | None |
 | Flow Logs role | `vpc-flow-logs.amazonaws.com`, only for flow logs in this account and region | `logs:CreateLogStream`, `logs:PutLogEvents`, `logs:DescribeLogStreams` | The Flow Logs log group. No `logs:CreateLogGroup` |
+| GitHub deploy role (bootstrap) | The GitHub OIDC provider, only for `sts.amazonaws.com` tokens of jobs in the `dev` environment of this repository (`sub` = `repo:<owner>/<repo>:environment:dev`) | `ecr:GetAuthorizationToken` | `*` |
+| | | `ecr:DescribeRepositories`, `ecr:DescribeImages` and the push actions | The app repository |
+| | | `ecs:DescribeTaskDefinition` | `*` |
+| | | `ecs:RegisterTaskDefinition`, and `ecs:TagResource` only while registering | The app task definition family |
+| | | `ecs:DescribeServices`, `ecs:UpdateService` (only to a revision of the app family) | The app service |
+| | | `ecs:RunTask` (only in the app cluster), `ecs:DescribeTasks` | The app family, tasks of the app cluster |
+| | | `iam:PassRole`, only to `ecs-tasks.amazonaws.com` | The task execution role and the task role |
+| | | `logs:GetLogEvents` | Streams of the app log group |
 | Access log bucket policy | Elastic Load Balancing account of the region | `s3:PutObject` | `AWSLogs/<account-id>/*` in that bucket |
 | Access log and state bucket policies | Everyone | Deny `s3:*` without TLS | The bucket and its objects |
 

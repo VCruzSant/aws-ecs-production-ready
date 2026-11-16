@@ -14,10 +14,6 @@ IMAGE_TAG := $(shell git log -1 --format=%h -- $(APP_DIR))$(if $(shell git statu
 endif
 
 MIGRATE_CMD ?= alembic upgrade head
-empty :=
-space := $(empty) $(empty)
-comma := ,
-MIGRATE_CMD_JSON := [$(subst $(space),$(comma),$(foreach w,$(MIGRATE_CMD),\"$(w)\"))]
 
 TRIVY_VERSION := 0.76.2
 CHECKOV_VERSION := 3.4.5
@@ -95,7 +91,7 @@ image-push: ## Build the app image for linux/amd64 and push it to ECR as IMAGE_T
 		echo "$$repo:$(IMAGE_TAG) is already in ECR, skipping the build"; exit 0; \
 	fi; \
 	aws ecr get-login-password --region $$region | docker login --username AWS --password-stdin $${repo%%/*}; \
-	docker build --platform linux/amd64 --provenance=false --build-arg RDS_CA_REGION=$$region $(if $(RDS_CA_SHA256),--build-arg RDS_CA_SHA256=$(RDS_CA_SHA256)) -t $$repo:$(IMAGE_TAG) $(APP_DIR); \
+	docker build --platform linux/amd64 --provenance=false --build-arg RDS_CA_REGION=$$region --build-arg APP_VERSION=$(IMAGE_TAG) $(if $(RDS_CA_SHA256),--build-arg RDS_CA_SHA256=$(RDS_CA_SHA256)) -t $$repo:$(IMAGE_TAG) $(APP_DIR); \
 	docker push $$repo:$(IMAGE_TAG); \
 	echo "Pushed $$repo:$(IMAGE_TAG)"
 
@@ -104,32 +100,8 @@ db-migrate: ## Run MIGRATE_CMD (default: alembic upgrade head) as a one-off ECS 
 	$(if $(findstring ',$(MIGRATE_CMD))$(findstring ",$(MIGRATE_CMD))$(findstring \,$(MIGRATE_CMD))$(findstring $$,$(MIGRATE_CMD)),$(error MIGRATE_CMD takes plain words only, without quotes, backslashes or $$))
 	@set -e; \
 	out() { terraform -chdir=$(TF_DIR) output -raw $$1; }; \
-	cluster=$$(out cluster_name); service=$$(out service_name); container=$$(out container_name); \
-	sg=$$(out task_security_group_id); logs=$$(out log_group_name); \
-	subnets=$$(terraform -chdir=$(TF_DIR) output -json private_subnet_ids | tr -d '[]" \n'); \
-	region=$$(out task_definition_arn | cut -d: -f4); \
-	taskdef=$$(aws ecs describe-services --region $$region --cluster $$cluster --services $$service --query 'services[0].taskDefinition' --output text); \
-	task=$$(aws ecs run-task --region $$region --cluster $$cluster --task-definition $$taskdef \
-		--launch-type FARGATE --started-by db-migrate \
-		--network-configuration "awsvpcConfiguration={subnets=[$$subnets],securityGroups=[$$sg],assignPublicIp=DISABLED}" \
-		--overrides "{\"containerOverrides\":[{\"name\":\"$$container\",\"command\":$(MIGRATE_CMD_JSON)}]}" \
-		--query 'tasks[0].taskArn' --output text); \
-	if [ -z "$$task" ] || [ "$$task" = "None" ]; then echo "run-task did not start a task"; exit 1; fi; \
-	echo "Started $$task ($${taskdef##*/}) running '$(MIGRATE_CMD)', waiting for it to stop"; \
-	if ! aws ecs wait tasks-stopped --region $$region --cluster $$cluster --tasks $$task; then \
-		echo "Still running after 10 minutes; do not start another migration until it stops."; \
-		echo "Check it: aws ecs describe-tasks --region $$region --cluster $$cluster --tasks $$task"; \
-		exit 1; \
-	fi; \
-	code=$$(aws ecs describe-tasks --region $$region --cluster $$cluster --tasks $$task --query 'tasks[0].containers[0].exitCode' --output text); \
-	stream="$$container/$$container/$${task##*/}"; \
-	aws logs get-log-events --region $$region --log-group-name $$logs --log-stream-name $$stream --query 'events[].message' --output text 2>/dev/null | tr '\t' '\n' || true; \
-	if [ "$$code" != "0" ]; then \
-		echo "Migration failed (exit code $$code): $$(aws ecs describe-tasks --region $$region --cluster $$cluster --tasks $$task --query 'tasks[0].[stoppedReason,containers[0].reason]' --output text | tr '\t' ' ' | sed 's/ None$$//')"; \
-		echo "Logs: aws logs tail $$logs --region $$region --log-stream-names $$stream"; \
-		exit 1; \
-	fi; \
-	echo "Migration finished (exit code 0)"
+	arn=$$(out task_definition_arn); cluster=$$(out cluster_name); service=$$(out service_name); \
+	scripts/ecs-migrate.sh $$(echo $$arn | cut -d: -f4) $$cluster $$service current $(MIGRATE_CMD)
 
 # The service needs an image that only exists after the repository does, so ECR goes first.
 infra-up: tf-init ## First deploy: create ECR, push the image, apply the rest, run the migration

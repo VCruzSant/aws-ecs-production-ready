@@ -18,6 +18,8 @@ What it creates:
 
 `terraform apply` waits for the service to reach a steady state (`wait_for_steady_state`), so a failed deployment fails the apply instead of passing silently.
 
+The service ignores changes to `task_definition`. Terraform sets the first revision and the deploy pipeline rolls out the next ones, so a `plan` after a pipeline deploy does not switch the service back. A Terraform change to the task definition (CPU, memory, environment) registers a new revision of the family, and the next pipeline deploy starts from it.
+
 `image` may be null only while the module is not being created or updated (for example on `terraform destroy`); a precondition on the task definition stops any other plan without it.
 
 ## Inputs

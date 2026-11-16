@@ -15,6 +15,8 @@ Production-ready AWS infrastructure for a containerized app, written in Terrafor
 - **RDS PostgreSQL with verified TLS.** The server refuses plain connections and the app connects with `verify-full` against the RDS CA bundle.
 - **No password in code or state.** RDS generates the master password and keeps it in Secrets Manager. The task gets it at start through its execution role.
 - **Migrations as a one-off task.** `make db-migrate` runs Alembic once per release, so tasks starting together never race on the schema.
+- **Deploy on merge, no AWS keys in GitHub.** A push to `main` that changes the app builds the image, runs the migration and rolls out a new revision. GitHub assumes a role through OIDC that only the `dev` environment of this repository can use. A failed rollout ends in a rollback and a red job. With no environment running, the workflow skips and stays green.
+- **CI on every pull request.** Lint, tests against PostgreSQL, Terraform checks, image build and the scanners, with every action pinned by SHA.
 - **Scanners in one command.** `make scan` runs Trivy and Checkov on the Terraform code and Trivy on the image. Every accepted finding has a written reason.
 - **Logs you can use.** The app writes JSON to CloudWatch Logs. VPC Flow Logs and ALB access logs are on.
 - **Cheap and removable.** About $0.12 an hour while running, and `make tf-destroy` removes everything except the state bucket and the budget.
@@ -64,7 +66,9 @@ The [provisioning guide](docs/provisioning-guide.md) covers the bootstrap, the p
 | Path | Contents |
 |---|---|
 | `app/` | Demo API: FastAPI, PostgreSQL, Alembic migrations, tests, Dockerfile |
-| `infra/` | Terraform: bootstrap, modules (network, ECR, ALB, ECS service, database) and the `dev` environment ([details](infra/README.md)) |
+| `infra/` | Terraform: bootstrap (state, budget, GitHub OIDC role), modules (network, ECR, ALB, ECS service, database) and the `dev` environment ([details](infra/README.md)) |
+| `scripts/` | `ecs-migrate.sh`, the one-off migration task used by `make db-migrate` and the deploy workflow |
+| `.github/` | CI on pull requests, deploy on push to `main`, Dependabot |
 | `docs/` | [Provisioning guide](docs/provisioning-guide.md), [security and cost review](docs/security-review.md), [local development](docs/local-development.md), evidence, diagram source |
 
 `make help` lists every command. `make diagram` regenerates the diagram from `docs/architecture.py`.
@@ -75,8 +79,6 @@ Scanners run clean, and each accepted finding is suppressed on its resource with
 
 ## Roadmap
 
-- CI with GitHub Actions: lint, tests, Terraform checks, image build and scanners on every pull request.
-- CD with OIDC: deploy on push to `main` with no AWS keys stored in GitHub, and rollback on a failed deploy.
 - Alarms in CloudWatch with SNS notifications, and Grafana dashboards.
 
 ## Contact

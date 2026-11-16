@@ -249,4 +249,9 @@ resource "aws_ecs_service" "this" {
 
   # The execution role must keep its permissions until the service is gone.
   depends_on = [aws_iam_role_policy.execution]
+
+  # The deploy pipeline owns the running revision; Terraform only sets the first one.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
