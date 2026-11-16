@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM python:3.12-slim AS builder
+FROM python:3.15-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /bin/uv
 
@@ -17,7 +17,7 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --locked --no-dev --no-editable
 
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 # Debian security fixes land before the base tag is rebuilt; the app runs from the venv, so pip goes.
 RUN apt-get update \
