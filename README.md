@@ -1,81 +1,88 @@
 # aws-ecs-production-ready
 
-Production-ready AWS infrastructure (ECS Fargate, RDS, ALB, CI/CD and monitoring, all in Terraform) for a containerized Python API.
+Production-ready AWS infrastructure for a containerized app, written in Terraform: ECS Fargate behind a load balancer, a private RDS database, secrets in Secrets Manager and a destroy that leaves nothing behind. A small FastAPI and PostgreSQL API is the demo workload.
 
-## What's inside
+![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.10-7B42BC?logo=terraform&logoColor=white)
+![AWS provider](https://img.shields.io/badge/AWS%20provider-~%3E6.73-FF9900?logo=amazonaws&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-| Path | Contents |
-|---|---|
-| `app/` | Demo API: FastAPI + PostgreSQL (SQLAlchemy 2, Alembic), managed with `uv` |
-| `infra/` | Terraform: state bootstrap, modules (network, ECR, ALB, ECS service), `dev` environment ([details](infra/README.md)) |
-| `docs/` | [Provisioning guide](docs/provisioning-guide.md), [security and cost review](docs/security-review.md); diagrams coming soon |
+![Architecture](docs/architecture.png)
 
-## Run locally
+## What you get
 
-Requirements: Docker with Compose v2, GNU Make, and [uv](https://docs.astral.sh/uv/) (only for tests and lint).
+- **Private network in 2 AZs.** Tasks and database run in private subnets with no public IP. Only the load balancer is public.
+- **ECS Fargate with automatic rollback.** The deployment circuit breaker returns to the previous task definition when new tasks fail the health check.
+- **RDS PostgreSQL with verified TLS.** The server refuses plain connections and the app connects with `verify-full` against the RDS CA bundle.
+- **No password in code or state.** RDS generates the master password and keeps it in Secrets Manager. The task gets it at start through its execution role.
+- **Migrations as a one-off task.** `make db-migrate` runs Alembic once per release, so tasks starting together never race on the schema.
+- **Scanners in one command.** `make scan` runs Trivy and Checkov on the Terraform code and Trivy on the image. Every accepted finding has a written reason.
+- **Logs you can use.** The app writes JSON to CloudWatch Logs. VPC Flow Logs and ALB access logs are on.
+- **Cheap and removable.** About $0.12 an hour while running, and `make tf-destroy` removes everything except the state bucket and the budget.
 
-```bash
-cp .env.example .env
-make up                         # docker compose up -d --build
-curl localhost:8000/health      # {"status":"ok"}
-curl localhost:8000/health/db   # {"status":"ok"}, or 503 if the database is down
+## Evidence
+
+One run on an empty account, from `make infra-up` to `make tf-destroy`.
+
+- [Deploy](docs/evidence/deploy.md): 53 resources created and the migration task exiting 0.
+- [API through the load balancer](docs/evidence/api.md): health checks, create, list, update and delete, and the JSON log lines those requests produced.
+- [State of the environment](docs/evidence/aws-state.md): ECS service running, target healthy, RDS private and encrypted, secret managed by RDS.
+- [Scanners](docs/evidence/scan.md): `make scan` with no findings.
+- [Destroy](docs/evidence/destroy.md): 53 resources removed, only the state bucket left.
+
 ```
-
-The `app` container waits for Postgres to be healthy, runs `alembic upgrade head` and then starts the API on port 8000. Interactive API docs: <http://localhost:8000/docs>.
-
-Try the API:
-
-```bash
-curl -X POST localhost:8000/tasks -H 'Content-Type: application/json' -d '{"title":"Ship it"}'
-curl localhost:8000/tasks
-curl -X PATCH localhost:8000/tasks/1 -H 'Content-Type: application/json' -d '{"done":true}'
-curl -X DELETE localhost:8000/tasks/1
+$ curl -i $URL/health/db
+HTTP/1.1 200 OK
+{"status":"ok"}
 ```
-
-| Endpoint | Description |
-|---|---|
-| `GET /health` | Liveness, does not touch the database |
-| `GET /health/db` | Runs `SELECT 1`; 200 or 503 |
-| `POST /tasks` | Create a task (`title` required, max 200 chars) |
-| `GET /tasks` | List tasks |
-| `GET /tasks/{id}` | Get a task |
-| `PATCH /tasks/{id}` | Update `title` and/or `done` |
-| `DELETE /tasks/{id}` | Delete a task |
-
-Other commands:
-
-```bash
-make test      # pytest against the compose Postgres, in a separate test database
-make lint      # ruff check + format check
-make fmt       # ruff autofix + format
-make migrate   # alembic upgrade head inside the app container
-make scan      # trivy and checkov on infra/, trivy on the app image (needs Docker)
-make logs      # follow the app logs (JSON lines)
-make down      # stop everything
-```
-
-### Configuration
-
-The app is configured only through environment variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (no default), `DB_SSLMODE` (default `prefer`; `verify-full` on AWS), `DB_SSLROOTCERT` (CA bundle used to verify the server; the image ships the RDS bundle at `/etc/ssl/certs/rds-ca.pem`) and `LOG_LEVEL`. The database settings are read only when a route needs the database, so the API starts and `/health` answers without them (`/health/db` returns 503). Logs are written to stdout as JSON, one line per request with method, route, status and duration.
-
-## Architecture
-
-_Coming soon._
-
-## Infrastructure
-
-Terraform lives in [`infra/`](infra/README.md): a bootstrap for the remote state (S3 with native locking) and a cost budget, a VPC module written from scratch, and the `dev` environment. The `dev` environment runs the API on ECS Fargate in private subnets behind a public Application Load Balancer, with the image in ECR and a PostgreSQL database on RDS whose password lives only in Secrets Manager. Migrations run as a one-off ECS task.
-
-The [provisioning guide](docs/provisioning-guide.md) walks through building the stack in any AWS account under any project name, and through using this repository as a template for a client. The [security and cost review](docs/security-review.md) lists every scanner finding with its decision, the IAM permissions, the security group rules, where secrets live and what the environment costs per hour.
-
-## CI/CD
-
-_Coming soon._
-
-## Monitoring
-
-_Coming soon._
 
 ## Cost
 
-_Coming soon._
+| | Per hour | Per month if left running |
+|---|---|---|
+| `dev` environment (NAT Gateway, ALB, one Fargate task, RDS `db.t4g.micro`) | about $0.12 | about $90 |
+| Bootstrap (state bucket and budget), kept after destroy | | under $0.01 |
+
+The environment is meant to be created, validated and destroyed. The full run above took about 20 minutes, around $0.04. The breakdown and the cheaper and costlier options (NAT per AZ, VPC endpoints, WAF) are in the [security and cost review](docs/security-review.md#cost).
+
+## Quickstart
+
+Needs Terraform, the AWS CLI, Docker, GNU Make and a profile for an AWS account.
+
+```bash
+export AWS_PROFILE=<your-profile>
+cd infra/bootstrap && cp terraform.tfvars.example terraform.tfvars   # set budget_alert_emails
+terraform init && terraform apply && cd ../..                         # state bucket and budget, once per account
+cd infra/envs/dev && cp backend.hcl.example backend.hcl               # set the bucket from the bootstrap output
+cd ../../.. && make infra-up                                          # ECR, image, network, ALB, ECS, RDS, migration
+make tf-destroy                                                       # remove everything in dev
+```
+
+The [provisioning guide](docs/provisioning-guide.md) covers the bootstrap, the prerequisites, another region and using this repository as the base for a client. To run only the API locally, see [local development](docs/local-development.md).
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `app/` | Demo API: FastAPI, PostgreSQL, Alembic migrations, tests, Dockerfile |
+| `infra/` | Terraform: bootstrap, modules (network, ECR, ALB, ECS service, database) and the `dev` environment ([details](infra/README.md)) |
+| `docs/` | [Provisioning guide](docs/provisioning-guide.md), [security and cost review](docs/security-review.md), [local development](docs/local-development.md), evidence, diagram source |
+
+`make help` lists every command. `make diagram` regenerates the diagram from `docs/architecture.py`.
+
+## Security
+
+Scanners run clean, and each accepted finding is suppressed on its resource with a reason. IAM roles are scoped to single resources, and the database password never reaches the code, the state or the logs. The [security and cost review](docs/security-review.md) has every finding, the IAM permissions, the security group rules and the known limitations, such as HTTP only until a domain and certificate exist.
+
+## Roadmap
+
+- CI with GitHub Actions: lint, tests, Terraform checks, image build and scanners on every pull request.
+- CD with OIDC: deploy on push to `main` with no AWS keys stored in GitHub, and rollback on a failed deploy.
+- Alarms in CloudWatch with SNS notifications, and Grafana dashboards.
+
+## Contact
+
+Available for AWS and Terraform work on Upwork: _profile link coming soon_.
+
+## License
+
+[MIT](LICENSE)
