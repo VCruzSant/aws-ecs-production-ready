@@ -40,5 +40,24 @@ services:
       timeout: 3s
       retries: 3
 
+  grafana:
+    image: grafana/grafana:12.2.0
+    profiles: [grafana]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      AWS_REGION: ${GRAFANA_AWS_REGION:-us-east-2}
+      # Short-lived keys of the read-only role, exported by `make grafana-up`.
+      AWS_ACCESS_KEY_ID:
+      AWS_SECRET_ACCESS_KEY:
+      AWS_SESSION_TOKEN:
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana-dashboards:ro
+
 volumes:
   pgdata:

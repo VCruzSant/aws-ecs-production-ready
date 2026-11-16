@@ -13,6 +13,7 @@ ifndef IMAGE_TAG
 IMAGE_TAG := $(shell git log -1 --format=%h -- $(APP_DIR))$(if $(shell git status --porcelain -- $(APP_DIR)),-dirty)
 endif
 
+GRAFANA_AWS_PROFILE ?= grafana
 MIGRATE_CMD ?= alembic upgrade head
 
 TRIVY_VERSION := 0.76.2
@@ -22,7 +23,7 @@ TRIVY := docker run --rm -v trivy-cache:/root/.cache/ -v $(CURDIR):/src:ro -w /s
 TRIVY_IMAGE := docker run --rm -v trivy-cache:/root/.cache/ -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:$(TRIVY_VERSION)
 CHECKOV := docker run --rm -v $(CURDIR):/src:ro -w /src bridgecrew/checkov:$(CHECKOV_VERSION)
 
-.PHONY: diagram help up down logs migrate test lint fmt scan tf-fmt tf-validate tf-init tf-plan tf-destroy image-push db-migrate infra-up
+.PHONY: diagram help up down logs migrate test lint fmt scan tf-fmt tf-validate tf-init tf-plan tf-destroy image-push db-migrate infra-up grafana-up grafana-down load
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -109,6 +110,17 @@ infra-up: tf-init ## First deploy: create ECR, push the image, apply the rest, r
 	$(MAKE) image-push ENV=$(ENV) IMAGE_TAG=$(IMAGE_TAG)
 	terraform -chdir=$(TF_DIR) apply -input=false $(TF_ENV_VAR) -var image_tag=$(IMAGE_TAG)
 	$(MAKE) db-migrate ENV=$(ENV)
+
+# Assuming the role on the host keeps AWS config files out of the container; the keys last one hour.
+grafana-up: ## Start Grafana on http://localhost:3000 with the read-only role (needs GRAFANA_ADMIN_PASSWORD in .env)
+	@grep -qE '^GRAFANA_ADMIN_PASSWORD=.+' .env 2>/dev/null || { echo "Set GRAFANA_ADMIN_PASSWORD in .env first (see .env.example)"; exit 1; }
+	@eval "$$(aws configure export-credentials --profile $(GRAFANA_AWS_PROFILE) --format env)" && docker compose --profile grafana up -d --force-recreate grafana
+
+grafana-down: ## Stop Grafana
+	docker compose --profile grafana stop grafana
+
+load: ## Send traffic to the ALB of ENV for DURATION seconds (default 240), with some 404s
+	scripts/load.sh $$(terraform -chdir=$(TF_DIR) output -raw alb_url) $(or $(DURATION),240)
 
 # Graphviz and the diagrams library run in a throwaway container, so nothing is installed on the host.
 diagram: ## Regenerate docs/architecture.png from docs/architecture.py (needs Docker)

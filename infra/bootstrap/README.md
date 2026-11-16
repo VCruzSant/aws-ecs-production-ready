@@ -7,7 +7,21 @@ Runs once per account, with local state. Nothing here is removed by `make tf-des
 | S3 bucket for the Terraform state | Every environment keeps its state in it, so it has to exist first and outlive them. `prevent_destroy` protects it. |
 | AWS Budget with e-mail alerts | Watches the whole account, not one environment. |
 | GitHub OIDC provider | One per account. It lets GitHub Actions get short-lived AWS credentials, so no AWS key is stored in GitHub. |
+| Grafana read-only role | Lets a local Grafana read CloudWatch metrics and the app logs. Free, and it outlives every environment. |
 | GitHub deploy role | Used by `.github/workflows/deploy.yml`. Created only when `github_repository` is set. |
+
+## Grafana role
+
+`<project>-grafana-readonly` can only read. It can list and read metrics, describe alarms and the log groups, and run Logs Insights queries on the `/ecs/<project>-*` log groups. It cannot write, change or delete anything, and it has no access to secrets, the database or other log groups. Its trust policy accepts only principals of the same account, so someone must already be signed in to the account to assume it.
+
+An AWS CLI profile assumes it, and `make grafana-up` exports its one-hour keys to the Grafana container, so no key is stored in a file or in `.env`:
+
+```ini
+[profile grafana]
+role_arn = <grafana_reader_role_arn from the outputs>
+source_profile = <your-profile>
+region = us-east-2
+```
 
 ## Deploy role
 
@@ -52,4 +66,5 @@ terraform import 'aws_iam_openid_connect_provider.github[0]' arn:aws:iam::<accou
 | `state_bucket_name` | Bucket for `backend.hcl` |
 | `region` | Region of the bucket |
 | `budget_name` | Name of the budget |
+| `grafana_reader_role_arn` | `role_arn` of the `grafana` AWS CLI profile |
 | `github_deploy_role_arn` | Role for `AWS_DEPLOY_ROLE_ARN` in the GitHub environment (null without `github_repository`) |
