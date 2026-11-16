@@ -17,3 +17,8 @@ output "github_deploy_role_arn" {
   description = "ARN of the role GitHub Actions assumes to deploy (AWS_DEPLOY_ROLE_ARN in the GitHub environment)."
   value       = one(aws_iam_role.github_deploy[*].arn)
 }
+
+output "grafana_reader_role_arn" {
+  description = "ARN of the read-only role a local Grafana assumes to read CloudWatch (role_arn of the AWS CLI profile)."
+  value       = aws_iam_role.grafana_reader.arn
+}

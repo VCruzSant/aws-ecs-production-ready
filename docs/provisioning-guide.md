@@ -225,6 +225,33 @@ The first deploy of an environment is still `make infra-up`, since the workflow 
 | `Deployment of <revision> failed and the circuit breaker rolled back` | The new tasks never passed the health check | Read the app logs. The previous revision keeps serving |
 | `Migration failed` in the workflow | The migration exited with an error, so the service was not updated | Read the log printed by the step, fix the migration and push again |
 
+## 12. Dashboards with Grafana
+
+A Grafana on your machine reads the environment's metrics and logs from CloudWatch. It needs the read-only role from the bootstrap (`grafana_reader_role_arn`, created by step 3) and Docker.
+
+1. Add a profile to `~/.aws/config` that assumes the role:
+
+   ```ini
+   [profile grafana]
+   role_arn = <grafana_reader_role_arn>
+   source_profile = <your-profile>
+   region = us-east-2
+   ```
+
+2. Set `GRAFANA_ADMIN_PASSWORD` in `.env` (see `.env.example`). `GRAFANA_AWS_REGION` is optional and defaults to `us-east-2`.
+3. Start it and open http://localhost:3000, user `admin`:
+
+   ```bash
+   make grafana-up
+   ```
+
+   The CloudWatch data source and the dashboard `AWS environment` are provisioned from `observability/grafana/`. The assumed role lasts one hour, so run `make grafana-up` again to refresh it.
+4. Pick the cluster, service, load balancer, target group, database and log group in the selectors at the top. They list what exists in the region, so another environment or project needs no change to the JSON. CloudWatch keeps the metrics of a destroyed environment for about two weeks, so an older load balancer or target group may be listed first: pick the current one.
+5. To see the panels move, send traffic with `make load ENV=<env>`, 4 minutes by default (`DURATION=<seconds>` changes it).
+6. Stop it with `make grafana-down`.
+
+The red lines in the graphs are the thresholds of the CloudWatch alarms, using the module defaults. If you change a threshold in `terraform.tfvars`, change the matching line in the dashboard JSON. Grafana sends no alerts: the alarms stay in CloudWatch.
+
 ## Using another region
 
 The defaults assume `us-east-2`. For another region:

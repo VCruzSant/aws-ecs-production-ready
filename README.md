@@ -19,6 +19,7 @@ Production-ready AWS infrastructure for a containerized app, written in Terrafor
 - **CI on every pull request.** Lint, tests against PostgreSQL, Terraform checks, image build and the scanners, with every action pinned by SHA.
 - **Scanners in one command.** `make scan` runs Trivy and Checkov on the Terraform code and Trivy on the image. Every accepted finding has a written reason.
 - **Logs you can use.** The app writes JSON to CloudWatch Logs. VPC Flow Logs and ALB access logs are on.
+- **Dashboards as code.** A Grafana on your machine reads CloudWatch through a read-only role. The data source and the dashboard are versioned files.
 - **Cheap and removable.** About $0.13 an hour while running, and `make tf-destroy` removes everything except the state bucket and the budget.
 
 ## Evidence
@@ -36,6 +37,14 @@ $ curl -i $URL/health/db
 HTTP/1.1 200 OK
 {"status":"ok"}
 ```
+
+## Observability
+
+CloudWatch alarms notify by e-mail through SNS (CPU, memory, 5xx, response time, healthy hosts, running tasks and database health). `make grafana-up` starts a local Grafana that reads the same metrics and the API logs, with the alarm thresholds drawn as red lines.
+
+![Grafana dashboard](docs/screenshots/grafana-dashboard.png)
+
+The capture was taken during a 4 minute `make load` run with some 404 responses. The data source, the dashboard and the read-only IAM role are code: see `observability/grafana/`, [the bootstrap](infra/bootstrap/README.md#grafana-role) and step 12 of the [provisioning guide](docs/provisioning-guide.md#12-dashboards-with-grafana). The alarms are defined in the [monitoring module](infra/modules/monitoring/README.md).
 
 ## Cost
 
@@ -67,7 +76,8 @@ The [provisioning guide](docs/provisioning-guide.md) covers the bootstrap, the p
 |---|---|
 | `app/` | Demo API: FastAPI, PostgreSQL, Alembic migrations, tests, Dockerfile |
 | `infra/` | Terraform: bootstrap (state, budget, GitHub OIDC role), modules (network, ECR, ALB, ECS service, database) and the `dev` environment ([details](infra/README.md)) |
-| `scripts/` | `ecs-migrate.sh`, the one-off migration task used by `make db-migrate` and the deploy workflow |
+| `observability/` | Grafana provisioning (CloudWatch data source) and the dashboard JSON |
+| `scripts/` | `ecs-migrate.sh`, the one-off migration task used by `make db-migrate` and the deploy workflow, and `load.sh` for `make load` |
 | `.github/` | CI on pull requests, deploy on push to `main`, Dependabot |
 | `docs/` | [Provisioning guide](docs/provisioning-guide.md), [security and cost review](docs/security-review.md), [local development](docs/local-development.md), evidence, diagram source |
 
@@ -79,7 +89,7 @@ Scanners run clean, and each accepted finding is suppressed on its resource with
 
 ## Roadmap
 
-- Alarms in CloudWatch with SNS notifications, and Grafana dashboards.
+- HTTPS with a domain and an ACM certificate.
 
 ## Contact
 
