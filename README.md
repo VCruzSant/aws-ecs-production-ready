@@ -19,7 +19,7 @@ Production-ready AWS infrastructure for a containerized app, written in Terrafor
 - **CI on every pull request.** Lint, tests against PostgreSQL, Terraform checks, image build and the scanners, with every action pinned by SHA.
 - **Scanners in one command.** `make scan` runs Trivy and Checkov on the Terraform code and Trivy on the image. Every accepted finding has a written reason.
 - **Logs you can use.** The app writes JSON to CloudWatch Logs. VPC Flow Logs and ALB access logs are on.
-- **Cheap and removable.** About $0.12 an hour while running, and `make tf-destroy` removes everything except the state bucket and the budget.
+- **Cheap and removable.** About $0.13 an hour while running, and `make tf-destroy` removes everything except the state bucket and the budget.
 
 ## Evidence
 
@@ -41,7 +41,7 @@ HTTP/1.1 200 OK
 
 | | Per hour | Per month if left running |
 |---|---|---|
-| `dev` environment (NAT Gateway, ALB, one Fargate task, RDS `db.t4g.micro`) | about $0.12 | about $90 |
+| `dev` environment (NAT Gateway, ALB, one Fargate task, RDS `db.t4g.micro`) | about $0.13 | about $95 |
 | Bootstrap (state bucket and budget), kept after destroy | | under $0.01 |
 
 The environment is meant to be created, validated and destroyed. The full run above took about 20 minutes, around $0.04. The breakdown and the cheaper and costlier options (NAT per AZ, VPC endpoints, WAF) are in the [security and cost review](docs/security-review.md#cost).

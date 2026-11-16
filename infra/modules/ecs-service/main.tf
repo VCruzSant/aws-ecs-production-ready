@@ -7,15 +7,30 @@ locals {
 
 data "aws_caller_identity" "current" {}
 
-#trivy:ignore:AWS-0034 Container Insights is a variable, off by default because it is billed per metric.
+#trivy:ignore:AWS-0034 Container Insights is a variable, off by default in the module because it is billed per metric.
 resource "aws_ecs_cluster" "this" {
-  #checkov:skip=CKV_AWS_65:Container Insights is a variable, off by default because it is billed per metric.
+  #checkov:skip=CKV_AWS_65:Container Insights is a variable, off by default in the module because it is billed per metric.
   name = var.name
 
   setting {
     name  = "containerInsights"
     value = var.container_insights ? "enabled" : "disabled"
   }
+
+  tags = var.tags
+
+  depends_on = [aws_cloudwatch_log_group.container_insights]
+}
+
+# Created here because AWS would create it on its own and leave it behind after destroy.
+#trivy:ignore:AWS-0017 CloudWatch Logs encrypts every log group by default; a KMS key adds cost and no protection here.
+resource "aws_cloudwatch_log_group" "container_insights" {
+  #checkov:skip=CKV_AWS_158:CloudWatch Logs encrypts every log group by default; a KMS key adds cost and no protection here.
+  #checkov:skip=CKV_AWS_338:Retention is a variable; 7 days is enough for a demo.
+  count = var.container_insights ? 1 : 0
+
+  name              = "/aws/ecs/containerinsights/${var.name}/performance"
+  retention_in_days = var.log_retention_days
 
   tags = var.tags
 }

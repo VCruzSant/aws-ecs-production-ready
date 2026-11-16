@@ -89,9 +89,9 @@ variable "desired_count" {
 }
 
 variable "container_insights" {
-  description = "Enable CloudWatch Container Insights (extra cost)."
+  description = "Enable CloudWatch Container Insights (extra cost, needed by the running tasks alarm)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "db_instance_class" {
@@ -104,4 +104,9 @@ variable "db_multi_az" {
   description = "Run the database with a standby in a second AZ (doubles its cost)."
   type        = bool
   default     = false
+}
+
+variable "alert_emails" {
+  description = "E-mail addresses that receive the CloudWatch alarms (each must confirm the SNS subscription)."
+  type        = list(string)
 }

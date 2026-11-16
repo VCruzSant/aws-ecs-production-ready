@@ -87,3 +87,13 @@ output "flow_logs_log_group_name" {
   description = "CloudWatch log group of the VPC Flow Logs."
   value       = module.network.flow_logs_log_group_name
 }
+
+output "alerts_topic_arn" {
+  description = "SNS topic that receives every alarm."
+  value       = module.monitoring.topic_arn
+}
+
+output "alarm_names" {
+  description = "Names of the CloudWatch alarms."
+  value       = module.monitoring.alarm_names
+}
