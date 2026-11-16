@@ -10,7 +10,8 @@ Terraform for the AWS side of the project. The region defaults to `us-east-2` an
 | `modules/alb/` | Public Application Load Balancer, target group for ECS tasks, HTTP listener and access logs in S3. See its [README](modules/alb/README.md). |
 | `modules/ecs-service/` | ECS cluster, Fargate task definition, service with circuit breaker rollback, IAM roles, logs. See its [README](modules/ecs-service/README.md). |
 | `modules/database/` | PostgreSQL on RDS in the private subnets, password managed by RDS in Secrets Manager, TLS required. See its [README](modules/database/README.md). |
-| `envs/dev/` | The `dev` environment, also the template for new ones (copy the folder, see the guide): network, ECR, ALB, the app on ECS Fargate and its RDS database. Remote state in S3 with native locking (`use_lockfile`, no DynamoDB table). |
+| `modules/monitoring/` | SNS topic with e-mail subscriptions and ten CloudWatch alarms for the ALB, the ECS service and the database. See its [README](modules/monitoring/README.md). |
+| `envs/dev/` | The `dev` environment, also the template for new ones (copy the folder, see the guide): network, ECR, ALB, the app on ECS Fargate, its RDS database and the alarms. Remote state in S3 with native locking (`use_lockfile`, no DynamoDB table). |
 
 ## Requirements
 
@@ -83,6 +84,26 @@ RDS generates the master password and keeps it in a Secrets Manager secret (`man
 
 The parameter group sets `rds.force_ssl = 1`, so the database refuses unencrypted connections. The app connects with `DB_SSLMODE=verify-full` and `DB_SSLROOTCERT=/etc/ssl/certs/rds-ca.pem`: the image ships the RDS CA bundle of the region (downloaded at build time and checked against a SHA-256), and the client verifies both the certificate chain and the hostname. The Dockerfile defaults to `us-east-2`; for another region pass `RDS_CA_SHA256` to `make image-push` as the [provisioning guide](../docs/provisioning-guide.md#using-another-region) explains.
 
+### Alarms
+
+Ten alarms send an e-mail through SNS when they go to `ALARM` and again when they return to `OK`. Set `alert_emails` in `terraform.tfvars` and confirm the subscription e-mail AWS sends after the apply; until then nothing is delivered. Names are `<project>-<env>-<resource>-<metric>`; each alarm description says what to check.
+
+| Alarm | Fires when | First thing to check |
+|---|---|---|
+| `alb-healthy-hosts` | No healthy target for 2 minutes, or no data | `aws ecs describe-services` events and the app logs |
+| `alb-target-5xx` | More than 5 app 5xx responses per minute for 2 minutes | App logs |
+| `alb-elb-5xx` | More than 5 load balancer 5xx responses per minute for 2 minutes | Target health |
+| `alb-response-time-p95` | p95 above 1 second for 2 minutes | Task CPU and the database |
+| `ecs-cpu`, `ecs-memory` | Average above 80% for 2 minutes | Scale out or raise the task size |
+| `ecs-running-tasks` | Fewer running tasks than `desired_count`, or no data (Container Insights) | Stopped tasks and their stop reason |
+| `rds-cpu` | Average above 80% for 2 minutes | Slow queries, instance size |
+| `rds-free-storage` | Under 2 GiB free | Raise `allocated_storage` |
+| `rds-freeable-memory` | Under 64 MiB freeable | Connections, instance size |
+
+A missing metric counts as a problem for `alb-healthy-hosts` and `ecs-running-tasks`. CloudWatch only notices a metric that stopped after a few minutes: scaling the service to 0 raised `ecs-running-tasks` after 7.5 minutes and `alb-healthy-hosts` after 9 minutes, so expect that delay, not one minute.
+
+Container Insights is on in `dev` (`container_insights = true`) and its log group is created by Terraform so `make tf-destroy` removes it. The topic is not encrypted with KMS, see the [security review](../docs/security-review.md).
+
 ### Check the deployment
 
 ```bash
@@ -129,7 +150,8 @@ The environments are meant to be created, validated and destroyed, not left runn
 | `dev` database: RDS `db.t4g.micro`, single-AZ | ~$0.02/hour | Instance $0.016/h + 20 GB gp3 at $0.115/GB-month (~$0.003/h) + the Secrets Manager secret at $0.40/month (~$0.001/h). |
 | `dev` app: ECR and CloudWatch Logs | < $0.01/day | Under 100 MB per compressed image at $0.10/GB-month; a few KB of logs |
 | `dev` Flow Logs and ALB access logs | < $0.01/day | $0.50/GB ingested by CloudWatch Logs for rejected traffic (a few MB); ALB log delivery is free and S3 storage for 7 days is cents |
-| **`dev` total** | **~$0.12/hour** (~$2.90/day) | Network + ALB + one task + database |
+| `dev` Container Insights and alarms | ~$0.01/hour | Container Insights custom metrics and its logs, plus 10 standard alarms at $0.10/month each. SNS e-mail is free for the first 1,000 notifications |
+| **`dev` total** | **~$0.13/hour** (~$3.10/day) | Network + ALB + one task + database + monitoring |
 | `dev` with `single_nat_gateway = false` | +$0.05/hour | One more NAT + Elastic IP |
 | `dev` with `db_multi_az = true` | +$0.02/hour | Standby instance and its storage |
 | Bootstrap: state bucket | **< $0.01/month** | A few KB of state files plus a handful of requests |

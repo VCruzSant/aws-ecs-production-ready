@@ -4,7 +4,7 @@ One containerized app on ECS Fargate, registered in an existing ALB target group
 
 What it creates:
 
-- **Cluster** with Container Insights off by default (it adds cost per metric; turn it on with `container_insights = true`).
+- **Cluster** with Container Insights off by default (it adds cost per metric; turn it on with `container_insights = true`). When on, the module also creates the Container Insights log group `/aws/ecs/containerinsights/<name>/performance`, so it is removed on destroy instead of being created by AWS and left behind.
 - **Task definition** for Fargate, `LINUX/X86_64`, 0.25 vCPU and 0.5 GB by default. The container runs with a read-only root filesystem and sends its stdout to CloudWatch Logs.
 - **Log group** `/ecs/<name>` with 7 days of retention.
 - **Execution role**, used by the ECS agent to start the task: pull from the given ECR repository, write to the log group and, `secretsmanager:GetSecretValue` on the secrets referenced in `secrets` only. Nothing else.
@@ -42,7 +42,7 @@ The service ignores changes to `task_definition`. Terraform sets the first revis
 | `memory` | `number` | `512` | Task memory in MiB |
 | `desired_count` | `number` | `1` | Number of tasks |
 | `health_check_grace_period_seconds` | `number` | `30` | Seconds to ignore failing health checks after a task starts |
-| `container_insights` | `bool` | `false` | Enable Container Insights |
+| `container_insights` | `bool` | `false` | Enable Container Insights and create its log group |
 | `log_retention_days` | `number` | `7` | Log retention in days |
 | `wait_for_steady_state` | `bool` | `true` | Make apply wait for healthy tasks |
 | `tags` | `map(string)` | `{}` | Extra tags merged into every resource |

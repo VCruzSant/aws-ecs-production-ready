@@ -56,7 +56,8 @@ Trivy severities are shown. The open source Checkov run reports no severity, so 
 | AWS-0133, CKV_AWS_353 | LOW | RDS Performance Insights | Not useful for an environment that lives for minutes |
 | AWS-0033, CKV_AWS_136 | LOW | ECR encryption | AES256 at rest; a KMS key adds cost and no protection here |
 | AWS-0017, CKV_AWS_158 | LOW | App and Flow Logs log groups | CloudWatch Logs encrypts every log group by default |
-| AWS-0034, CKV_AWS_65 | LOW | ECS Container Insights | A variable, off by default because it is billed per metric |
+| AWS-0034, CKV_AWS_65 | LOW | ECS Container Insights | A variable, off by default in the module because it is billed per metric; `dev` turns it on |
+| AWS-0095, CKV_AWS_26 | HIGH | SNS alerts topic | Alarms cannot publish to a topic encrypted with the AWS managed key `aws/sns`, because its key policy cannot be changed. A customer managed key would cost $1 a month while it exists, keeps a 7 to 30 day deletion window after destroy and needs a key policy for CloudWatch. The messages only name an alarm and a metric. The topic policy lets only `cloudwatch.amazonaws.com` publish, for alarms of this account whose name starts with the environment prefix |
 | CKV_AWS_338 | | App and Flow Logs log groups | Retention is a variable; 7 days is enough for a demo |
 | CKV_AWS_129, CKV_AWS_118 | | RDS log exports, enhanced monitoring | Both create log groups that RDS owns and that `terraform destroy` would leave behind |
 | CKV_AWS_144, CKV2_AWS_62 | | State bucket, access log bucket | No cross-region replica and no event notifications: nothing consumes them, and the state is versioned |
@@ -136,8 +137,9 @@ On-demand prices in `us-east-2`.
 | Fargate task, 0.25 vCPU and 0.5 GB | $0.012 | |
 | RDS `db.t4g.micro`, 20 GB gp3 | $0.019 | Instance $0.016 + storage |
 | Secrets Manager secret | $0.001 | $0.40 a month |
+| Container Insights and alarms | $0.01 | See the infra README |
 | ECR, CloudWatch Logs, Flow Logs, access logs | under $0.01 | A few MB of logs and one image. ALB log delivery is free; S3 storage is cents |
-| **`dev` total** | **about $0.12** | About $2.90 a day or $90 a month if left running, which it never is |
+| **`dev` total** | **about $0.13** | About $3.10 a day or $95 a month if left running, which it never is |
 | Bootstrap: state bucket and budget | under $0.01 a month | Stays after `make tf-destroy` |
 
 The environment is created, validated and destroyed. This review's run took 28 minutes, about $0.06. Earlier validation runs took between 4 and 21 minutes each.

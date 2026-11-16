@@ -83,3 +83,17 @@ module "database" {
   instance_class = var.db_instance_class
   multi_az       = var.db_multi_az
 }
+
+module "monitoring" {
+  source = "../../modules/monitoring"
+
+  name         = local.name
+  alert_emails = var.alert_emails
+
+  alb_arn_suffix          = module.alb.arn_suffix
+  target_group_arn_suffix = module.alb.target_group_arn_suffix
+  cluster_name            = module.ecs_service.cluster_name
+  service_name            = module.ecs_service.service_name
+  desired_count           = var.desired_count
+  db_instance_identifier  = module.database.identifier
+}

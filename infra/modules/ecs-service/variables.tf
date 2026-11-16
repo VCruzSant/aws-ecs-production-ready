@@ -117,7 +117,7 @@ variable "health_check_grace_period_seconds" {
 }
 
 variable "container_insights" {
-  description = "Enable CloudWatch Container Insights on the cluster (extra cost per metric)."
+  description = "Enable CloudWatch Container Insights on the cluster, with its log group managed here (extra cost per metric)."
   type        = bool
   default     = false
 }

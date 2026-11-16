@@ -103,7 +103,8 @@ Edit `terraform.tfvars` (every line is optional, the commented defaults apply ot
 | `desired_count` | Number of app tasks | `1` |
 | `db_instance_class` | RDS instance size | `db.t4g.micro` |
 | `db_multi_az` | Standby database in a second AZ, about twice the database cost | `false` |
-| `container_insights` | CloudWatch Container Insights, extra cost | `false` |
+| `alert_emails` | Required. E-mail addresses that receive the CloudWatch alarms | none |
+| `container_insights` | CloudWatch Container Insights, extra cost; the running tasks alarm needs it | `true` |
 | `enable_flow_logs`, `alb_access_logs` | Rejected-traffic logs and load balancer access logs, 7 days each | `true` |
 | `app_port` | Port the container listens on | `8000` |
 
@@ -115,7 +116,7 @@ Check the whole thing with a plan before spending anything:
 make tf-plan ENV=staging
 ```
 
-Expected: `Plan: 53 to add, 0 to change, 0 to destroy.` and every name starting with `<project>-staging`. Nothing is created.
+Expected: `Plan: 67 to add, 0 to change, 0 to destroy.` and every name starting with `<project>-staging`. Nothing is created.
 
 ## 5. First deploy
 
@@ -133,6 +134,16 @@ It runs four steps and asks for confirmation before each `apply`:
 | Migration | `make db-migrate` runs `alembic upgrade head` as a one-off ECS task | 1 to 2 minutes |
 
 This is the only place where `-target` is used. `ENV` is the same on every command, so leaving it out would act on `dev`.
+
+### Confirm the alarm e-mails
+
+Right after the apply, SNS sends "AWS Notification - Subscription Confirmation" to each address in `alert_emails`. Open it (check spam) and click "Confirm subscription". Alarms raised before that are not delivered. To test the path without breaking anything:
+
+```bash
+aws cloudwatch set-alarm-state --alarm-name <project>-<env>-rds-cpu --state-value ALARM --state-reason test
+```
+
+The alarm returns to `OK` on its own within a minute or two and sends the recovery e-mail.
 
 ## 6. Verify
 
@@ -183,7 +194,7 @@ This removes everything in the environment: network, load balancer, service, dat
 
 ## 10. Cost
 
-The environments are meant to be created, validated and destroyed. With everything running, `dev` costs about $0.12 per hour (about $2.90 per day). After `make tf-destroy` only the state bucket and the budget remain, under $0.01 per month. The per-resource table and the cost of each variant are in the [infra README](../infra/README.md#cost-us-east-2-on-demand-prices) and the [security review](security-review.md#cost).
+The environments are meant to be created, validated and destroyed. With everything running, `dev` costs about $0.13 per hour (about $3.10 per day). After `make tf-destroy` only the state bucket and the budget remain, under $0.01 per month. The per-resource table and the cost of each variant are in the [infra README](../infra/README.md#cost-us-east-2-on-demand-prices) and the [security review](security-review.md#cost).
 
 ## 11. Continuous deployment
 
